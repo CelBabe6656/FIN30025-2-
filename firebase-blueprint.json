@@ -1,0 +1,68 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "User business profile and preferences",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "bizName": { "type": "string" },
+        "abn": { "type": "string" },
+        "isGstRegistered": { "type": "boolean" },
+        "paygEarnings": { "type": "number" },
+        "expectedOtherIncome": { "type": "number" }
+      },
+      "required": ["uid"]
+    },
+    "Receipt": {
+      "title": "Receipt/Invoice",
+      "description": "Scanned receipt or invoice metadata",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "vendor": { "type": "string" },
+        "total": { "type": "number" },
+        "gst": { "type": "number" },
+        "subtotal": { "type": "number" },
+        "category": { "type": "string", "description": "e.g. Materials, Tools, Fuel, etc" },
+        "type": { "enum": ["SOLE_TRADER", "PAYG", "PERSONAL"] },
+        "apportionment": { "type": "object" },
+        "imageUrl": { "type": "string" },
+        "isAsset": { "type": "boolean" },
+        "depreciationRate": { "type": "number" },
+        "purchaseYear": { "type": "number" },
+        "folderPath": { "type": "string" }
+      },
+      "required": ["userId", "total", "date"]
+    },
+    "LogEntry": {
+      "title": "KM Logbook Entry",
+      "description": "Vehicle travel log",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "km": { "type": "number" },
+        "purpose": { "type": "string" },
+        "origin": { "type": "string" },
+        "destination": { "type": "string" }
+      },
+      "required": ["userId", "date", "km"]
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": "User",
+      "description": "Root user profile"
+    },
+    "users/{userId}/receipts/{receiptId}": {
+      "schema": "Receipt",
+      "description": "User's receipts and invoices"
+    },
+    "users/{userId}/logbook/{logId}": {
+      "schema": "LogEntry",
+      "description": "User's travel logs"
+    }
+  }
+}

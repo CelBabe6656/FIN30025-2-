@@ -1,0 +1,1 @@
+                             onChange={e => setNewReceipt({...newReceipt, vendor: e.target.value})}

@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>My Google AI Studio App</title>
+    <script>
+      // Prevent libraries from crashing when trying to overwrite read-only window.fetch
+      (function() {
+        if (typeof window !== 'undefined') {
+          if (!window.process) window.process = { env: {} };
+          if (!window.global) window.global = window;
+          
+          if (window.fetch) {
+            const originalFetch = window.fetch;
+            try {
+              Object.defineProperty(window, 'fetch', {
+                get() { return originalFetch; },
+                set() { console.warn('Prevented attempt to overwrite window.fetch'); },
+                configurable: true
+              });
+            } catch (e) {
+              console.error('Failed to shim fetch:', e);
+            }
+          }
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

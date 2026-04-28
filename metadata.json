@@ -1,0 +1,6 @@
+{
+  "name": "TradieTax",
+  "description": "AI-powered accounting for sole traders. Features receipt capture, tax bill prediction, Bunnings PowerPass splitting, and GST compliance.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": []
+}
