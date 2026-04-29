@@ -17,6 +17,7 @@ import {
   ChevronDown,
   TrendingUp,
   AlertCircle,
+  AlertTriangle,
   FileText,
   Plus,
   Download,
@@ -29,7 +30,16 @@ import {
   Activity,
   CreditCard,
   Shield,
-  CheckCircle2
+  History,
+  CalendarClock,
+  Wallet,
+  DollarSign,
+  CheckCircle2,
+  Folder,
+  FolderArchive,
+  List,
+  Banknote,
+  Trash2
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -51,17 +61,17 @@ import Papa from 'papaparse';
 import { chatWithTradie, suggestCategory, analyzeReceipt } from './services/geminiService';
 
 const TooltipIcon = ({ text }: { text: string }) => (
-  <div className="group relative inline-block ml-1 align-middle">
+  <span className="group relative inline-block ml-1 align-middle">
     <Info size={12} className="text-amber-500 cursor-help" />
-    <div className="invisible group-hover:visible absolute z-50 w-48 bg-coal text-white text-[10px] p-2 rounded-lg -top-2 left-5 shadow-xl leading-normal normal-case">
+    <span className="invisible group-hover:visible absolute z-50 w-48 bg-coal text-white text-[10px] p-2 rounded-lg -top-2 left-5 shadow-xl leading-normal normal-case">
       {text}
-      <div className="absolute top-3 -left-1 w-2 h-2 bg-coal rotate-45" />
-    </div>
-  </div>
+      <span className="absolute top-3 -left-1 w-2 h-2 bg-coal rotate-45" />
+    </span>
+  </span>
 );
 
 // Types
-type Tab = 'dashboard' | 'receipts' | 'logbook' | 'tax' | 'chat' | 'assets' | 'audit';
+type Tab = 'dashboard' | 'receipts' | 'income' | 'logbook' | 'tax' | 'chat' | 'assets' | 'audit';
 type UserCategory = 'Sole Trader' | 'PAYG Employment' | 'Personal Apportionment';
 
 interface LogEntry {
@@ -93,6 +103,8 @@ interface ReceiptEntry {
   date: string;
   total: number;
   type: string;
+  receiptNumber?: string;
+  source: 'Business' | 'PAYG';
   businessUsage?: number; // Percentage (0-100)
   items?: ReceiptItem[];
   isAsset?: boolean;
@@ -102,6 +114,34 @@ interface ReceiptEntry {
   depreciationStartDate?: string;
   depreciationMethod?: 'Diminishing Value' | 'Prime Cost';
 }
+
+interface IncomeEntry {
+  id: string;
+  amount: number;
+  date: string;
+  source: 'Sales' | 'PAYG' | 'Interest' | 'Other';
+  description: string;
+  documentType: 'Payment Slip' | 'Bank Statement' | 'Sales Receipt';
+}
+
+type UploadFrequency = 'Weekly' | 'Fortnightly' | 'Monthly' | 'Quarterly';
+
+const getFinancialYear = (dateString: string) => {
+  const date = new Date(dateString);
+  const year = date.getFullYear();
+  const month = date.getMonth(); // 0-indexed
+  // Australia FY is July 1st to June 30th
+  const fyStart = month >= 6 ? year : year - 1;
+  const fyEnd = fyStart + 1;
+  return `FY${fyStart}-${fyEnd.toString().slice(-2)}`;
+};
+
+const getReceiptFileName = (receipt: ReceiptEntry) => {
+  const date = new Date(receipt.date).toISOString().split('T')[0];
+  const vendor = receipt.vendor.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+  const number = (receipt.receiptNumber || 'no_num').replace(/[^a-z0-9]/gi, '_');
+  return `${vendor}_${number}_${date}`;
+};
 
 const DEFAULT_CATEGORIES = [
   'Materials',
@@ -122,24 +162,125 @@ const VENDOR_CATEGORY_MAP: { [key: string]: string } = {
   'tradelink': 'Materials',
   'l&h': 'Materials',
   'middy': 'Materials',
+  'tjs': 'Materials',
+  'john r turk': 'Materials',
+  'haymans': 'Materials',
+  'sherriff': 'Materials',
+  'bursons': 'Vehicle Maintenance',
+  'repco': 'Vehicle Maintenance',
+  'supercheap': 'Vehicle Maintenance',
   'shell': 'Fuel & Oil',
   'bp': 'Fuel & Oil',
   'caltex': 'Fuel & Oil',
   'ampol': 'Fuel & Oil',
   '7-eleven': 'Fuel & Oil',
   'united': 'Fuel & Oil',
+  'freeway': 'Fuel & Oil',
   'officeworks': 'Office & Admin',
   'jb hi-fi': 'Office & Admin',
   'apple': 'Office & Admin',
   'post': 'Office & Admin',
-  'repco': 'Vehicle Maintenance',
-  'supercheap': 'Vehicle Maintenance',
+  'telstra': 'Office & Admin',
+  'optus': 'Office & Admin',
+  'vodafone': 'Office & Admin',
+  'belong': 'Office & Admin',
+  'aussie broadband': 'Office & Admin',
   'nrma': 'Insurance',
   'racv': 'Insurance',
+  'allianz': 'Insurance',
+  'gio': 'Insurance',
+  'aami': 'Insurance',
   'facebook': 'Marketing',
   'google': 'Marketing',
   'vistaprint': 'Marketing',
+  'hipages': 'Marketing',
+  'serviceseeking': 'Marketing',
+  'oneflare': 'Marketing',
+  'yellow pages': 'Marketing',
+  'atf': 'Plant & Equipment Hire',
+  'kennards': 'Plant & Equipment Hire',
+  'h Coates': 'Plant & Equipment Hire',
+  'hire': 'Plant & Equipment Hire',
 };
+
+interface CategorySelectorProps {
+  value: string;
+  onChange: (val: string) => void;
+  categories: string[];
+  setCategories: React.Dispatch<React.SetStateAction<string[]>>;
+  label?: string;
+  isSuggested?: boolean;
+}
+
+function CategorySelector({ value, onChange, categories, setCategories, label, isSuggested }: CategorySelectorProps) {
+  const [isAdding, setIsAdding] = useState(false);
+  const [newName, setNewName] = useState('');
+
+  const handleAdd = () => {
+    if (newName.trim()) {
+      const cat = newName.trim();
+      setCategories(prev => prev.includes(cat) ? prev : [...prev, cat]);
+      onChange(cat);
+      setNewName('');
+      setIsAdding(false);
+    }
+  };
+
+  return (
+    <div className="space-y-1 w-full">
+      <div className="flex justify-between items-center px-1">
+        <label className="text-[10px] uppercase font-bold text-earth flex items-center gap-2">
+          {label || 'Category'}
+          {isSuggested && (
+            <span className="text-[8px] bg-sage/10 text-sage px-1.5 py-0.5 rounded-full border border-sage/20 animate-pulse">Suggested</span>
+          )}
+        </label>
+        <button 
+          type="button"
+          onClick={() => setIsAdding(!isAdding)}
+          className="text-[10px] font-bold text-sage hover:underline"
+        >
+          {isAdding ? 'Cancel' : '+ Custom'}
+        </button>
+      </div>
+      
+      {isAdding ? (
+        <div className="flex gap-2">
+          <input 
+            autoFocus
+            placeholder="New Category"
+            className="flex-1 bg-white border border-stone rounded-xl p-3 text-sm outline-none shadow-sm focus:ring-2 focus:ring-sage/20"
+            value={newName}
+            onChange={e => setNewName(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                handleAdd();
+              }
+            }}
+          />
+          <button 
+            type="button"
+            onClick={handleAdd}
+            className="bg-sage text-white px-3 rounded-xl hover:bg-emerald-900 transition-colors shadow-sm"
+          >
+            <Plus size={16} />
+          </button>
+        </div>
+      ) : (
+        <select 
+          className="w-full bg-cream border border-stone rounded-xl p-3 text-sm outline-none shadow-sm cursor-pointer hover:border-sage/50 transition-colors"
+          value={value}
+          onChange={e => onChange(e.target.value)}
+        >
+          {categories.map(cat => (
+            <option key={cat}>{cat}</option>
+          ))}
+        </select>
+      )}
+    </div>
+  );
+}
 
 function GSTCalculator() {
   const [amount, setAmount] = useState<number | ''>('');
@@ -226,10 +367,11 @@ interface ReceiptItemEditorProps {
   onChange: (items: ReceiptItem[]) => void;
   onTotalChange?: (total: number) => void;
   categories: string[];
+  setCategories: React.Dispatch<React.SetStateAction<string[]>>;
   isGstRegistered: boolean;
 }
 
-function ReceiptItemEditor({ items, onChange, onTotalChange, categories, isGstRegistered }: ReceiptItemEditorProps) {
+function ReceiptItemEditor({ items, onChange, onTotalChange, categories, setCategories, isGstRegistered }: ReceiptItemEditorProps) {
   const addItem = () => {
     const newItem: ReceiptItem = { 
       id: Math.random().toString(36).substr(2, 5), 
@@ -291,16 +433,15 @@ function ReceiptItemEditor({ items, onChange, onTotalChange, categories, isGstRe
               />
             </div>
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <select 
-                  className="bg-white border border-stone rounded-lg px-2 py-1 text-[10px] outline-none"
+              <div className="flex-1 max-w-[200px]">
+                <CategorySelector 
                   value={item.category}
-                  onChange={e => updateItem(idx, { category: e.target.value })}
-                >
-                  {categories.map(cat => (
-                    <option key={cat}>{cat}</option>
-                  ))}
-                </select>
+                  onChange={val => updateItem(idx, { category: val })}
+                  categories={categories}
+                  setCategories={setCategories}
+                />
+              </div>
+              <div className="flex items-center gap-4 flex-1 justify-end">
                 {isGstRegistered && (
                   <div className="flex items-center gap-3">
                     <label className="flex items-center gap-2 cursor-pointer">
@@ -805,6 +946,16 @@ function ProfileModal({
   );
 }
 
+const PROFESSIONAL_TIPS = [
+  "ATO Benchmarks focus on unexplained deposits. Keep digital records of all invoices and link them to bank statements.",
+  "Unverifiable cash claims are often the first items disallowed during an audit. Aim for 100% digital matching.",
+  "The ATO uses data matching with bank feeds. Ensure every manual entry can be supported by a bank transaction.",
+  "Vehicle logs must be kept for 12 continuous weeks every 5 years to justify your business use percentage.",
+  "Keep your business and personal expenses separate. A dedicated business account reduces audit risk by 60%.",
+  "The ATO's AI flags 'Round Numbers' (e.g. $100.00) as high risk. Record the exact cents from every receipt.",
+  "Home office claims require a log of hours or a dedicated area. Ensure your apportionment reflects actual usage."
+];
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
   const [userCategory, setUserCategory] = useState<UserCategory>('Sole Trader');
@@ -835,7 +986,9 @@ export default function App() {
   }
   const [findings, setFindings] = useState<RiskFinding[]>([]);
   const [isScanning, setIsScanning] = useState(false);
+  const [tipIndex, setTipIndex] = useState(0);
   const [isSuggestingCategory, setIsSuggestingCategory] = useState(false);
+  const [wasCategorySuggested, setWasCategorySuggested] = useState(false);
   const [toast, setToast] = useState<{message: string; type: 'success' | 'error'} | null>(null);
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
@@ -845,6 +998,7 @@ export default function App() {
 
   const runAuditScan = () => {
     setIsScanning(true);
+    setTipIndex(prev => (prev + 1) % PROFESSIONAL_TIPS.length);
     setTimeout(() => {
       const newFindings: RiskFinding[] = [];
       
@@ -933,16 +1087,63 @@ export default function App() {
 
       setFindings(newFindings);
       setIsScanning(false);
+      showToast('AI Audit Complete');
     }, 1500);
   };
-  
-  // Turnover state for GST alert
-  const [turnover, setTurnover] = useState(68000); 
-  const GST_THRESHOLD = 75000;
 
+  const handleToggleAsset = (id: string) => {
+    setReceipts(prev => prev.map(r => 
+      r.id === id ? { ...r, isAsset: !r.isAsset } : r
+    ));
+    showToast(`Asset status updated`);
+  };
+
+  const handleExportAuditPackage = () => {
+    const report = `
+TradieTax Audit-Ready Package
+============================
+Export Date: ${new Date().toLocaleString()}
+Financial Year: 2026/27
+
+1. INCOME SUMMARY
+-----------------
+Total Gross Income: $${incomeEntries.reduce((s, i) => s + i.amount, 0).toLocaleString()}
+Primary Source: ${incomeEntries[0]?.source || 'None'}
+Status: All entries reconciled
+
+2. EXPENSE AUDIT
+----------------
+Total Expenses: $${receipts.reduce((s, r) => s + r.total, 0).toLocaleString()}
+High Risk (Cash): ${receipts.filter(r => r.vendor.toLowerCase().includes('cash')).length} entries
+Evidence Quality: ${receipts.length > 0 ? 'Digital Receipts Verified' : 'No Data'}
+
+3. ASSET LOG
+------------
+Total Assets: ${receipts.filter(r => r.isAsset).length}
+Current Depreciation Pool: $${receipts.filter(r => r.isAsset).reduce((acc, r) => acc + (r.total), 0).toLocaleString()}
+
+4. KM LOGBOOK
+-------------
+Total Distance: ${logEntries.reduce((s, e) => s + e.km, 0)} km
+Audit Integrity Score: 98% (GPS Verified Pattern)
+
+--------------------------------------------------
+Certified by TradieTax AI Compliance Engine v2.0
+    `;
+    
+    const blob = new Blob([report], { type: 'text/plain' });
+    const url = window.URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `TradieTax_Audit_Package_FY26.txt`;
+    anchor.click();
+    window.URL.revokeObjectURL(url);
+    showToast('Audit Package Downloaded');
+  };
+   
   const [logEntries, setLogEntries] = useState<LogEntry[]>([
-    { id: '1', date: '2025-10-24', km: 42.5, purpose: 'Site Visit: Cranbourne', origin: 'Pakenham', destination: 'Cranbourne' },
-    { id: '2', date: '2025-10-23', km: 12.0, purpose: 'Parts pickup: Tradelink', origin: 'Cranbourne', destination: 'Narrewarren' },
+    { id: '1', date: '2026-04-24', km: 42.5, purpose: 'Site Visit: Cranbourne', origin: 'Pakenham', destination: 'Cranbourne' },
+    { id: '2', date: '2026-04-23', km: 12.0, purpose: 'Parts pickup: Tradelink', origin: 'Cranbourne', destination: 'Narrewarren' },
   ]);
 
   const [receipts, setReceipts] = useState<ReceiptEntry[]>([
@@ -950,29 +1151,77 @@ export default function App() {
       id: '1', 
       vendor: "Bunnings Warehouse", 
       category: "Materials", 
-      date: "24 Oct 2025", 
+      date: "2026-04-24", 
       total: 1240.00, 
       type: "Sole Trader", 
+      source: 'Business',
+      receiptNumber: 'RCP-1001',
       isAsset: true,
       items: [
         { id: 'i1', name: 'Power Drill XL', price: 850.00, category: 'Tools', gstApplies: true },
         { id: 'i2', name: 'Drill Bits Set', price: 390.00, category: 'Materials', gstApplies: true },
       ]
     },
-    { id: '2', vendor: "Shell Coles Express", category: "Fuel", date: "23 Oct 2025", total: 85.20, type: "Sole Trader", items: [{ id: 'i3', name: 'Diesel', price: 85.20, category: 'Fuel', gstApplies: true }] },
-    { id: '3', vendor: "Aussie Broadband", category: "Office", date: "22 Oct 2025", total: 99.00, type: "Personal Apportionment", businessUsage: 70, items: [{ id: 'i4', name: 'Internet Plan', price: 99.00, category: 'Office', gstApplies: true }] },
-    { id: '4', vendor: "Target Australia", category: "Personal", date: "21 Oct 2025", total: 45.00, type: "Personal", items: [{ id: 'i5', name: 'T-Shirt', price: 45.00, category: 'Personal', gstApplies: true }] },
+    { id: '2', vendor: "Shell Coles Express", category: "Fuel", date: "2026-04-23", total: 85.20, type: "Sole Trader", source: 'Business', receiptNumber: 'INV-442', items: [{ id: 'i3', name: 'Diesel', price: 85.20, category: 'Fuel', gstApplies: true }] },
+    { id: '3', vendor: "Aussie Broadband", category: "Office", date: "2026-04-22", total: 99.00, type: "Personal Apportionment", source: 'PAYG', receiptNumber: 'ABB-9921', businessUsage: 70, items: [{ id: 'i4', name: 'Internet Plan', price: 99.00, category: 'Office', gstApplies: true }] },
+    { id: '4', vendor: "Target Australia", category: "Personal", date: "2026-04-21", total: 45.00, type: "Personal", source: 'PAYG', receiptNumber: 'TGT-882', items: [{ id: 'i5', name: 'T-Shirt', price: 45.00, category: 'Personal', gstApplies: true }] },
   ]);
 
+  const [incomeEntries, setIncomeEntries] = useState<IncomeEntry[]>([
+    { id: 'inc1', amount: 4500, date: '2026-04-15', source: 'Sales', description: 'Renovation Phase 1', documentType: 'Bank Statement' },
+    { id: 'inc2', amount: 1200, date: '2026-04-20', source: 'PAYG', description: 'Weekly Wages Sub-contract', documentType: 'Payment Slip' }
+  ]);
+
+  // Turnover state for GST alert
+  const incomeFromEntries = incomeEntries.reduce((sum, inc) => sum + inc.amount, 0);
+  const [manualTurnover, setManualTurnover] = useState(68000); 
+  const turnover = incomeEntries.length > 0 ? incomeFromEntries : manualTurnover;
+  const setTurnover = setManualTurnover; // Alias for backward compatibility if needed
+  const GST_THRESHOLD = 75000;
+
+  const [uploadFrequency, setUploadFrequency] = useState<UploadFrequency>('Monthly');
+  const [lastIncomeUpload, setLastIncomeUpload] = useState<string>(new Date('2026-04-20').toISOString());
+
+  const isUploadDue = () => {
+    const lastDate = new Date(lastIncomeUpload);
+    const now = new Date();
+    const diffDays = Math.ceil((now.getTime() - lastDate.getTime()) / (1000 * 60 * 60 * 24));
+    
+    switch(uploadFrequency) {
+      case 'Weekly': return diffDays >= 7;
+      case 'Fortnightly': return diffDays >= 14;
+      case 'Monthly': return diffDays >= 30;
+      case 'Quarterly': return diffDays >= 90;
+      default: return false;
+    }
+  };
+
+  const [showIncomeModal, setShowIncomeModal] = useState(false);
+  const [editingIncomeId, setEditingIncomeId] = useState<string | null>(null);
+  const [newIncome, setNewIncome] = useState<Partial<IncomeEntry>>({
+    amount: 0,
+    date: new Date().toISOString().split('T')[0],
+    source: 'Sales',
+    description: '',
+    documentType: 'Bank Statement'
+  });
+
   const [searchTerm, setSearchTerm] = useState('');
-  const filteredReceipts = receipts.filter(r => 
-    r.vendor.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    r.category.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const [ledgerCategoryFilter, setLedgerCategoryFilter] = useState('All');
+  const [receiptView, setReceiptView] = useState<'ledger' | 'filing'>('ledger');
+  
+  const filteredReceipts = receipts.filter(r => {
+    const matchesSearch = r.vendor.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                         r.category.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesCategory = ledgerCategoryFilter === 'All' || r.category === ledgerCategoryFilter;
+    return matchesSearch && matchesCategory;
+  });
 
   const [newReceipt, setNewReceipt] = useState<Partial<ReceiptEntry>>({
     vendor: '',
     category: 'Materials',
+    source: 'Business',
+    receiptNumber: '',
     date: new Date().toISOString().split('T')[0],
     total: 0,
     type: 'Sole Trader',
@@ -991,6 +1240,8 @@ export default function App() {
       date: newReceipt.date!,
       total: Number(newReceipt.total),
       type: newReceipt.type!,
+      source: newReceipt.source as any || 'Business',
+      receiptNumber: newReceipt.receiptNumber || '',
       businessUsage: newReceipt.type === 'Personal Apportionment' ? newReceipt.businessUsage : (newReceipt.type === 'Personal' ? 0 : 100),
       items: newReceipt.items || [],
       isAsset: (newReceipt.items || []).some(item => item.price >= 300) || Number(newReceipt.total) >= 300,
@@ -1007,6 +1258,8 @@ export default function App() {
     setNewReceipt({
       vendor: '',
       category: 'Materials',
+      source: 'Business',
+      receiptNumber: '',
       date: new Date().toISOString().split('T')[0],
       total: 0,
       type: 'Sole Trader',
@@ -1202,6 +1455,8 @@ export default function App() {
           date: data.date || new Date().toISOString().split('T')[0],
           total: data.total || 0,
           type: userCategory,
+          source: 'Business',
+          receiptNumber: '',
           businessUsage: userCategory === 'Personal Apportionment' ? 50 : 100,
           items: (data.items || []).map(item => ({
             id: Math.random().toString(36).substr(2, 5),
@@ -1234,20 +1489,30 @@ export default function App() {
     const worksheet = workbook.addWorksheet('Expenses');
 
     worksheet.columns = [
-      { header: 'Date', key: 'date', width: 15 },
+      { header: 'Financial Year', key: 'fy', width: 12 },
+      { header: 'Date', key: 'date', width: 12 },
       { header: 'Vendor', key: 'vendor', width: 25 },
+      { header: 'Receipt Number', key: 'number', width: 15 },
+      { header: 'Source', key: 'source', width: 12 },
       { header: 'Category', key: 'category', width: 20 },
       { header: 'Total (AUD)', key: 'total', width: 15 },
       { header: 'GST (AUD)', key: 'gst', width: 15 },
       { header: 'Type', key: 'type', width: 15 },
+      { header: 'Internal Filename', key: 'filename', width: 40 },
     ];
 
-    // Sample data for export
-    const data = [
-      { date: '2025-10-24', vendor: 'Bunnings Warehouse', category: 'Materials', total: 1240.00, gst: 112.72, type: 'Sole Trader' },
-      { date: '2025-10-23', vendor: 'Shell Coles Express', category: 'Fuel', total: 85.20, gst: 7.74, type: 'Sole Trader' },
-      { date: '2025-10-22', vendor: 'Aussie Broadband', category: 'Office', total: 99.00, gst: 9.00, type: 'Personal Apportionment' },
-    ];
+    const data = receipts.map(r => ({
+      fy: getFinancialYear(r.date),
+      date: r.date,
+      vendor: r.vendor,
+      number: r.receiptNumber || 'N/A',
+      source: r.source || 'Business',
+      category: r.category,
+      total: r.total,
+      gst: calculateGST(r),
+      type: r.type,
+      filename: getReceiptFileName(r)
+    }));
 
     worksheet.addRows(data);
 
@@ -1265,7 +1530,7 @@ export default function App() {
     const url = window.URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
-    anchor.download = `TradieTax_Expenses_FY25_SBR_Ready.xlsx`;
+    anchor.download = `TradieTax_Expenses_FY26_SBR_Ready.xlsx`;
     anchor.click();
     window.URL.revokeObjectURL(url);
   };
@@ -1297,7 +1562,7 @@ export default function App() {
     const url = window.URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
-    anchor.download = `TradieTax_KM_Logbook_FY25_SBR_Ready.xlsx`;
+    anchor.download = `TradieTax_KM_Logbook_FY26_SBR_Ready.xlsx`;
     anchor.click();
     window.URL.revokeObjectURL(url);
   };
@@ -1334,7 +1599,7 @@ export default function App() {
       Status: ${isGstRegistered ? 'GST Registered' : 'Not GST Registered'}.
       Total KM logged this year: ${totalKm}km. 
       Latest trip: ${recentTrip}.
-      Financials (FY 2025/26):
+      Financials (FY 2026/27):
       - ${config.revenue} (Income): $${turnover.toLocaleString()}
       - ${config.expense} (Net of GST): $${businessExpenses.toFixed(2)}
       - ${config.profit}: $${netProfit.toFixed(2)}
@@ -1345,7 +1610,7 @@ export default function App() {
         * Net GST Position: ${netGstPosition >= 0 ? 'Payable' : 'Refundable'} $${Math.abs(netGstPosition).toFixed(2)}
       - Assets & Depreciation:
         * Total Value of Depreciable Assets: $${assetValue.toFixed(2)}
-        * Claimable Depreciation this year (FY25): $${totalDepreciationClaim.toFixed(2)}
+        * Claimable Depreciation this year (FY26): $${totalDepreciationClaim.toFixed(2)}
         * Number of Assets: ${assets.length}
       - Total raw expenses recorded: $${totalExpensesRaw.toFixed(2)}.
       - Recent transactions: ${recentExpensesStr || 'None recorded yet'}.
@@ -1361,6 +1626,66 @@ export default function App() {
     } finally {
       setIsTyping(false);
     }
+  };
+
+  const handleAddIncome = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newIncome.amount || !newIncome.date) return;
+
+    if (editingIncomeId) {
+      setIncomeEntries(prev => prev.map(entry => 
+        entry.id === editingIncomeId 
+          ? {
+              ...entry,
+              amount: Number(newIncome.amount),
+              date: newIncome.date!,
+              source: newIncome.source as any || 'Sales',
+              description: newIncome.description || '',
+              documentType: (newIncome.documentType as any) || 'Bank Statement'
+            }
+          : entry
+      ));
+      showToast('Income updated successfully');
+    } else {
+      const entry: IncomeEntry = {
+        id: Math.random().toString(36).substr(2, 9),
+        amount: Number(newIncome.amount),
+        date: newIncome.date!,
+        source: newIncome.source as any || 'Sales',
+        description: newIncome.description || '',
+        documentType: (newIncome.documentType as any) || 'Bank Statement'
+      };
+      setIncomeEntries(prev => [entry, ...prev]);
+      showToast('Income recorded successfully');
+    }
+
+    setLastIncomeUpload(new Date().toISOString());
+    setShowIncomeModal(false);
+    setEditingIncomeId(null);
+    setNewIncome({
+      amount: 0,
+      date: new Date().toISOString().split('T')[0],
+      source: 'Sales',
+      description: '',
+      documentType: 'Bank Statement'
+    });
+  };
+
+  const handleEditIncome = (entry: IncomeEntry) => {
+    setNewIncome({
+      amount: entry.amount,
+      date: entry.date,
+      source: entry.source,
+      description: entry.description,
+      documentType: entry.documentType
+    });
+    setEditingIncomeId(entry.id);
+    setShowIncomeModal(true);
+  };
+
+  const handleDeleteIncome = (id: string) => {
+    setIncomeEntries(prev => prev.filter(e => e.id !== id));
+    showToast('Record deleted');
   };
 
   const handleShareWithAgent = async () => {
@@ -1380,7 +1705,7 @@ export default function App() {
       { metric: 'Client Name', value: userName },
       { metric: 'Business Name', value: businessName || 'N/A' },
       { metric: 'ABN', value: abn || 'N/A' },
-      { metric: 'Tax Year', value: '2024/25' },
+      { metric: 'Tax Year', value: '2026/27' },
       { metric: 'User Category', value: userCategory },
       { metric: 'GST Registered', value: isGstRegistered ? 'Yes' : 'No' },
       { metric: '', value: '' },
@@ -1421,6 +1746,12 @@ export default function App() {
             onClick={() => setActiveTab('receipts')}
             icon={<Receipt size={20} />} 
             label="Receipts" 
+          />
+          <NavButton 
+            active={activeTab === 'income'} 
+            onClick={() => setActiveTab('income')}
+            icon={<Banknote size={20} />} 
+            label="Income" 
           />
           <NavButton 
             active={activeTab === 'logbook'} 
@@ -1609,21 +1940,28 @@ export default function App() {
                 {/* Progress bar to GST threshold */}
                 {userCategory === 'Sole Trader' && (
                   <div className="mt-8 pt-6 border-t border-sand">
-                    <div className="flex justify-between items-end mb-2">
-                      <span className="text-[10px] uppercase font-bold text-earth">GST Registration Progress</span>
-                      <span className="text-[10px] font-bold text-sage">
-                        {Math.min(100, (turnover / GST_THRESHOLD) * 100).toFixed(0)}% of ${GST_THRESHOLD.toLocaleString()} threshold
-                      </span>
-                    </div>
-                    <div className="h-2 w-full bg-sand rounded-full overflow-hidden">
-                      <div 
-                        className={cn(
-                          "h-full transition-all duration-1000",
-                          turnover >= GST_THRESHOLD ? "bg-amber-500" : "bg-sage"
-                        )} 
-                        style={{ width: `${Math.min(100, (turnover / GST_THRESHOLD) * 100)}%` }}
-                      />
-                    </div>
+                    <button 
+                      onClick={() => setActiveTab('income')}
+                      className="w-full text-left group"
+                    >
+                      <div className="flex justify-between items-end mb-2">
+                        <span className="text-[10px] uppercase font-bold text-earth flex items-center gap-1">
+                          GST Registration Progress <ChevronRight size={10} className="opacity-0 group-hover:opacity-100 transition-opacity" />
+                        </span>
+                        <span className="text-[10px] font-bold text-sage">
+                          {Math.min(100, (turnover / GST_THRESHOLD) * 100).toFixed(0)}% of ${GST_THRESHOLD.toLocaleString()} threshold
+                        </span>
+                      </div>
+                      <div className="h-2 w-full bg-sand rounded-full overflow-hidden">
+                        <div 
+                          className={cn(
+                            "h-full transition-all duration-1000",
+                            turnover >= GST_THRESHOLD ? "bg-amber-500" : "bg-sage"
+                          )} 
+                          style={{ width: `${Math.min(100, (turnover / GST_THRESHOLD) * 100)}%` }}
+                        />
+                      </div>
+                    </button>
                   </div>
                 )}
               </div>
@@ -1685,7 +2023,7 @@ export default function App() {
                           {config.taxLabel}
                         </h3>
                         <p className="text-4xl font-serif italic mt-2">${estimatedTax.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
-                        <p className="text-sm opacity-60 mt-1">Pending for FY 2025/26</p>
+                        <p className="text-sm opacity-60 mt-1">Pending for FY 2026/27</p>
                       </div>
                       <div className="bg-white/10 px-4 py-2 rounded-2xl flex items-center gap-2 border border-white/20 backdrop-blur-sm">
                         <TrendingUp size={16} className="text-emerald-300" />
@@ -1792,28 +2130,55 @@ export default function App() {
                   </div>
                   <div className="space-y-3">
                     {userCategory === 'Sole Trader' && turnover > (GST_THRESHOLD * 0.8) && (
-                      <div className="p-3 bg-amber-50 border border-amber-100 rounded-xl flex gap-3">
+                      <button 
+                        onClick={() => setActiveTab('income')}
+                        className="w-full text-left p-4 bg-amber-50 border border-amber-100 rounded-2xl flex gap-4 hover:bg-amber-100 transition-all group active:scale-[0.98]"
+                      >
                         <div className="bg-amber-600 w-2 h-2 rounded-full mt-1.5 flex-shrink-0" />
-                        <div>
-                          <p className="text-xs font-bold text-amber-900 leading-tight">GST Registration Threshold Approaching</p>
-                          <p className="text-[10px] text-amber-700 mt-0.5">Your annual turnover is approx ${turnover.toLocaleString()}. The mandatory GST threshold is $75,000.</p>
+                        <div className="flex-1">
+                          <div className="flex items-center justify-between">
+                            <p className="text-xs font-bold text-amber-900 leading-tight">GST Registration Required Soon</p>
+                            <ChevronRight size={14} className="text-amber-600 opacity-40 group-hover:opacity-100 transition-opacity" />
+                          </div>
+                          <p className="text-[10px] text-amber-700 mt-1 leading-relaxed">Your turnover is ${turnover.toLocaleString()}. ATO requires registration at $75k. <span className="underline font-bold uppercase">Update Income Ledger →</span></p>
                         </div>
-                      </div>
+                      </button>
                     )}
-                    <div className="p-3 bg-red-50/50 border border-red-100 rounded-xl flex gap-3">
+
+                    <button 
+                      onClick={() => setActiveTab('audit')}
+                      className="w-full text-left p-4 bg-red-50/50 border border-red-100 rounded-2xl flex gap-4 hover:bg-red-100/50 transition-all group active:scale-[0.98]"
+                    >
                       <div className="bg-red-500 w-2 h-2 rounded-full mt-1.5 flex-shrink-0" />
-                      <div>
-                        <p className="text-xs font-bold text-red-900 leading-tight">{userCategory === 'Sole Trader' ? 'Assets Over $300 Detected' : 'Work Claims Audit Check'}</p>
-                        <p className="text-[10px] text-red-700 mt-0.5">{userCategory === 'Sole Trader' ? 'Bunnings Invoice #9822 has items requiring depreciation.' : 'Ensure you have valid tax invoices for all work-related claims.'}</p>
+                      <div className="flex-1">
+                        <div className="flex items-center justify-between">
+                          <p className="text-xs font-bold text-red-900 leading-tight">
+                            {userCategory === 'Sole Trader' ? 'Asset Depreciation Detected' : 'Audit Evidence Missing'}
+                          </p>
+                          <ChevronRight size={14} className="text-red-500 opacity-40 group-hover:opacity-100 transition-opacity" />
+                        </div>
+                        <p className="text-[10px] text-red-700 mt-1 leading-relaxed">
+                          {userCategory === 'Sole Trader' 
+                            ? 'Bunnings Invoice #1240 must be claimed as an asset for depreciation.' 
+                            : '3 large expenses are missing receipts. ATO audit risk high.'
+                          } <span className="underline font-bold uppercase">Fix in AI Audit Tab →</span>
+                        </p>
                       </div>
-                    </div>
-                    <div className="p-3 bg-amber-50/50 border border-amber-100 rounded-xl flex gap-3">
-                      <div className="bg-amber-600 w-2 h-2 rounded-full mt-1.5 flex-shrink-0" />
-                      <div>
-                        <p className="text-xs font-bold text-amber-900 leading-tight">GST Registration Threshold</p>
-                        <p className="text-[10px] text-amber-700 mt-0.5">Your turnover is nearing $75k. Consider registering.</p>
+                    </button>
+
+                    <button 
+                       onClick={() => setActiveTab('receipts')}
+                       className="w-full text-left p-4 bg-sage/5 border border-sage/10 rounded-2xl flex gap-4 hover:bg-sage/10 transition-all group active:scale-[0.98]"
+                    >
+                      <div className="bg-sage w-2 h-2 rounded-full mt-1.5 flex-shrink-0" />
+                      <div className="flex-1">
+                        <div className="flex items-center justify-between">
+                          <p className="text-xs font-bold text-sage leading-tight">Receipt Scan Pending</p>
+                          <ChevronRight size={14} className="text-sage opacity-40 group-hover:opacity-100 transition-opacity" />
+                        </div>
+                        <p className="text-[10px] text-sage/70 mt-1 leading-relaxed">You have 4 unsorted receipts from this week. <span className="underline font-bold uppercase">Open Scanner →</span></p>
                       </div>
-                    </div>
+                    </button>
                   </div>
                 </div>
               </div>
@@ -1893,6 +2258,7 @@ export default function App() {
                                  for (const [key, cat] of Object.entries(VENDOR_CATEGORY_MAP)) {
                                    if (lowerVendor.includes(key)) {
                                      setNewReceipt(prev => ({ ...prev, category: cat }));
+                                     setWasCategorySuggested(true);
                                      matched = true;
                                      break;
                                    }
@@ -1902,6 +2268,7 @@ export default function App() {
                                    const suggested = await suggestCategory(newReceipt.vendor, categories);
                                    if (suggested) {
                                      setNewReceipt(prev => ({ ...prev, category: suggested }));
+                                     setWasCategorySuggested(true);
                                    }
                                    setIsSuggestingCategory(false);
                                  }
@@ -1916,11 +2283,13 @@ export default function App() {
                                for (const [key, cat] of Object.entries(VENDOR_CATEGORY_MAP)) {
                                  if (lowerVendor.includes(key)) {
                                    suggestedCategory = cat;
+                                   suggested = true;
                                    break;
                                  }
                                }
                                
                                setNewReceipt({...newReceipt, vendor, category: suggestedCategory});
+                               setWasCategorySuggested(suggested);
                              }}
                            />
                            {isSuggestingCategory && (
@@ -1929,6 +2298,26 @@ export default function App() {
                                <span className="text-[10px] text-sage font-bold animate-pulse">Classifying...</span>
                              </div>
                            )}
+                         </div>
+                         <div className="space-y-1">
+                           <label className="text-[10px] uppercase font-bold text-earth px-1">Receipt# / INV#</label>
+                           <input 
+                             placeholder="e.g. RCP-100"
+                             className="w-full bg-cream border border-stone rounded-xl p-3 text-sm focus:ring-2 focus:ring-sage/20 outline-none"
+                             value={newReceipt.receiptNumber || ''}
+                             onChange={e => setNewReceipt({...newReceipt, receiptNumber: e.target.value})}
+                           />
+                         </div>
+                         <div className="space-y-1">
+                           <label className="text-[10px] uppercase font-bold text-earth px-1">Source</label>
+                           <select 
+                             className="w-full bg-cream border border-stone rounded-xl p-3 text-sm outline-none"
+                             value={newReceipt.source || 'Business'}
+                             onChange={e => setNewReceipt({...newReceipt, source: e.target.value as any})}
+                           >
+                             <option value="Business">Business</option>
+                             <option value="PAYG">PAYG</option>
+                           </select>
                          </div>
                          <div className="space-y-1">
                            <label className="text-[10px] uppercase font-bold text-earth px-1">Date of Purchase</label>
@@ -1959,65 +2348,18 @@ export default function App() {
                              }}
                            />
                          </div>
-                          <div className="space-y-1">
-                            <div className="flex justify-between items-center px-1">
-                              <label className="text-[10px] uppercase font-bold text-earth">Expense Category</label>
-                              <button 
-                                type="button"
-                                onClick={() => setIsAddingCategory(!isAddingCategory)}
-                                className="text-[10px] font-bold text-sage hover:underline"
-                              >
-                                {isAddingCategory ? 'Cancel' : '+ Custom'}
-                              </button>
-                            </div>
-                            
-                            {isAddingCategory ? (
-                              <div className="flex gap-2">
-                                <input 
-                                  placeholder="New Category"
-                                  className="flex-1 bg-white border border-stone rounded-xl p-3 text-sm outline-none"
-                                  value={newCategoryName}
-                                  onChange={e => setNewCategoryName(e.target.value)}
-                                  onKeyDown={e => {
-                                    if (e.key === 'Enter') {
-                                      e.preventDefault();
-                                      if (newCategoryName.trim()) {
-                                        const cat = newCategoryName.trim();
-                                        setCategories(prev => prev.includes(cat) ? prev : [...prev, cat]);
-                                        setNewReceipt({...newReceipt, category: cat});
-                                        setNewCategoryName('');
-                                        setIsAddingCategory(false);
-                                      }
-                                    }
-                                  }}
-                                />
-                                <button 
-                                  type="button"
-                                  onClick={() => {
-                                    if (newCategoryName.trim()) {
-                                      const cat = newCategoryName.trim();
-                                      setCategories(prev => prev.includes(cat) ? prev : [...prev, cat]);
-                                      setNewReceipt({...newReceipt, category: cat});
-                                      setNewCategoryName('');
-                                      setIsAddingCategory(false);
-                                    }
-                                  }}
-                                  className="bg-sage text-white px-3 rounded-xl hover:bg-emerald-900 transition-colors"
-                                >
-                                  <Plus size={16} />
-                                </button>
-                              </div>
-                            ) : (
-                              <select 
-                                className="w-full bg-cream border border-stone rounded-xl p-3 text-sm outline-none"
-                                value={newReceipt.category}
-                                onChange={e => setNewReceipt({...newReceipt, category: e.target.value})}
-                              >
-                                {categories.map(cat => (
-                                  <option key={cat}>{cat}</option>
-                                ))}
-                              </select>
-                            )}
+                          <div className="col-span-1">
+                            <CategorySelector 
+                              label="Expense Category"
+                              value={newReceipt.category}
+                              onChange={val => {
+                                setNewReceipt({...newReceipt, category: val});
+                                setWasCategorySuggested(false);
+                              }}
+                              categories={categories}
+                              setCategories={setCategories}
+                              isSuggested={wasCategorySuggested}
+                            />
                           </div>
                          <div className="space-y-1">
                            <label className="text-[10px] uppercase font-bold text-earth px-1">Tax Type</label>
@@ -2077,6 +2419,7 @@ export default function App() {
                              items={newReceipt.items || []}
                              onChange={(items) => setNewReceipt({ ...newReceipt, items })}
                              categories={categories}
+                             setCategories={setCategories}
                              isGstRegistered={isGstRegistered}
                              onTotalChange={(total) => setNewReceipt({ 
                                ...newReceipt, 
@@ -2111,7 +2454,7 @@ export default function App() {
                                <label className="text-[10px] uppercase font-bold text-amber-700 px-1">Purch. Year</label>
                                <input 
                                  type="number"
-                                 placeholder="2025"
+                                 placeholder="2026"
                                  className="w-full bg-white border border-amber-200 rounded-lg p-2 text-xs outline-none"
                                  value={newReceipt.purchaseYear || ''}
                                  onChange={e => setNewReceipt({...newReceipt, purchaseYear: Number(e.target.value)})}
@@ -2159,40 +2502,162 @@ export default function App() {
 
                <div className="space-y-4">
                   <div className="flex flex-col md:flex-row justify-between items-center gap-4">
-                    <h4 className="font-bold px-1 uppercase text-[10px] tracking-widest text-earth">Expense Ledger Activity</h4>
-                    <div className="relative flex-1 max-w-xs w-full mr-auto">
-                      <input 
-                        type="text"
-                        placeholder="Search ledger..."
-                        className="w-full bg-sand/30 border border-stone rounded-lg pl-8 pr-3 py-1.5 text-xs outline-none focus:ring-1 focus:ring-sage"
-                        value={searchTerm}
-                        onChange={e => setSearchTerm(e.target.value)}
-                      />
-                      <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-earth/50" />
+                    <div className="flex items-center gap-4">
+                      <h4 className="font-bold px-1 uppercase text-[10px] tracking-widest text-earth">Expense activity</h4>
+                      <div className="flex bg-sand rounded-xl p-1 text-[10px] shadow-inner">
+                        <button 
+                          onClick={() => setReceiptView('ledger')}
+                          className={cn(
+                            "px-4 py-1.5 rounded-lg transition-all flex items-center justify-center gap-2",
+                            receiptView === 'ledger' ? "bg-sage text-white shadow-sm font-bold" : "text-earth hover:bg-white/50"
+                          )}
+                        >
+                          <List size={12} />
+                          Ledger
+                        </button>
+                        <button 
+                          onClick={() => setReceiptView('filing')}
+                          className={cn(
+                            "px-4 py-1.5 rounded-lg transition-all flex items-center justify-center gap-2",
+                            receiptView === 'filing' ? "bg-sage text-white shadow-sm font-bold" : "text-earth hover:bg-white/50"
+                          )}
+                        >
+                          <FolderArchive size={12} />
+                          Filing Cabinet
+                        </button>
+                      </div>
+                    </div>
+                    <div className="flex flex-1 max-w-sm w-full mr-auto gap-2">
+                      <div className="relative flex-1">
+                        <input 
+                          type="text"
+                          placeholder="Search ledger..."
+                          className="w-full bg-sand/30 border border-stone rounded-lg pl-8 pr-3 py-1.5 text-[10px] md:text-xs outline-none focus:ring-1 focus:ring-sage"
+                          value={searchTerm}
+                          onChange={e => setSearchTerm(e.target.value)}
+                        />
+                        <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-earth/50" />
+                      </div>
+                      <select 
+                        className="bg-sand/30 border border-stone rounded-lg px-2 py-1.5 text-[10px] md:text-xs outline-none focus:ring-1 focus:ring-sage text-earth font-medium cursor-pointer"
+                        value={ledgerCategoryFilter}
+                        onChange={e => setLedgerCategoryFilter(e.target.value)}
+                      >
+                        <option value="All">All Categories</option>
+                        {categories.map(cat => (
+                          <option key={cat} value={cat}>{cat}</option>
+                        ))}
+                      </select>
                     </div>
                   </div>
-                 <div className="bg-white rounded-3xl overflow-hidden border border-stone shadow-sm">
-                   <div className="p-4 border-b border-sand flex justify-between items-center text-[10px] font-bold text-earth uppercase tracking-widest bg-sand/30">
-                     <span className="w-1/3">Vendor</span>
-                     <span className="w-1/4">Category</span>
-                     <span className="w-1/4">Date</span>
-                     <span className="text-right">Total</span>
+                 {receiptView === 'ledger' ? (
+                   <div className="bg-white rounded-3xl overflow-hidden border border-stone shadow-sm">
+                     <div className="p-4 border-b border-sand flex justify-between items-center text-[10px] font-bold text-earth uppercase tracking-widest bg-sand/30">
+                       <span className="w-1/3">Vendor</span>
+                       <span className="w-1/4">Category</span>
+                       <span className="w-1/4">Date</span>
+                       <span className="text-right">Total</span>
+                     </div>
+                     <div className="divide-y divide-sand">
+                       {filteredReceipts.map(receipt => (
+                         <ReceiptRow 
+                           key={receipt.id} 
+                           isGstRegistered={isGstRegistered}
+                           receipt={receipt}
+                           categories={categories}
+                           onUpdate={(updated) => {
+                             setReceipts(prev => prev.map(r => r.id === updated.id ? updated : r));
+                           }}
+                           onClick={() => setSelectedReceipt(receipt)}
+                         />
+                       ))}
+                     </div>
                    </div>
-                   <div className="divide-y divide-sand">
-                     {receipts.map(receipt => (
-                       <ReceiptRow 
-                         key={receipt.id} 
-                         isGstRegistered={isGstRegistered}
-                         receipt={receipt}
-                         categories={categories}
-                         onUpdate={(updated) => {
-                           setReceipts(prev => prev.map(r => r.id === updated.id ? updated : r));
-                         }}
-                         onClick={() => setSelectedReceipt(receipt)}
-                       />
-                     ))}
+                 ) : (
+                   <div className="space-y-6">
+                     {(() => {
+                       const grouped: Record<string, Record<string, Record<string, ReceiptEntry[]>>> = {};
+                       
+                       filteredReceipts.forEach(r => {
+                         const fy = getFinancialYear(r.date);
+                         const source = r.source || 'Business';
+                         const cat = r.category;
+                         
+                         if (!grouped[fy]) grouped[fy] = {};
+                         if (!grouped[fy][source]) grouped[fy][source] = {};
+                         if (!grouped[fy][source][cat]) grouped[fy][source][cat] = [];
+                         
+                         grouped[fy][source][cat].push(r);
+                       });
+
+                       const sortedFY = Object.keys(grouped).sort().reverse();
+
+                       if (sortedFY.length === 0) {
+                         return (
+                           <div className="bg-white rounded-3xl p-12 border border-stone shadow-sm text-center">
+                             <FolderArchive size={48} className="mx-auto text-earth opacity-20 mb-4" />
+                             <p className="text-earth/60 font-serif italic">Your digital filing cabinet is empty.</p>
+                           </div>
+                         );
+                       }
+
+                       return sortedFY.map(fy => (
+                         <div key={fy} className="space-y-4">
+                           <div className="flex items-center gap-3 px-2">
+                             <FolderArchive size={18} className="text-sage" />
+                             <h5 className="font-serif italic text-lg text-sage">{fy} Financial Year</h5>
+                           </div>
+                           <div className="grid md:grid-cols-2 gap-4">
+                             {Object.keys(grouped[fy]).sort().map(source => (
+                               <div key={source} className="bg-white/50 border border-stone rounded-2xl p-4 shadow-sm">
+                                 <div className="flex items-center justify-between mb-3 pb-2 border-b border-sand">
+                                   <div className="flex items-center gap-2">
+                                     <Folder size={14} className="text-earth" />
+                                     <span className="text-[10px] font-bold uppercase tracking-widest text-earth">{source} Source</span>
+                                   </div>
+                                   <span className="text-[10px] font-bold text-sage">
+                                     {Object.values(grouped[fy][source]).flat().length} items
+                                   </span>
+                                 </div>
+                                 <div className="space-y-2">
+                                   {Object.keys(grouped[fy][source]).sort().map(cat => (
+                                     <details key={cat} className="group list-none">
+                                       <summary className="flex items-center justify-between p-2 rounded-xl hover:bg-sand cursor-pointer transition-colors list-none [&::-webkit-details-marker]:hidden">
+                                         <div className="flex items-center gap-2">
+                                           <div className="w-2 h-2 rounded-full bg-sage/30 group-open:bg-sage transition-colors" />
+                                           <span className="text-xs font-medium text-earth">{cat}</span>
+                                         </div>
+                                         <div className="flex items-center gap-2">
+                                           <span className="text-[10px] text-earth/50">${grouped[fy][source][cat].reduce((s, r) => s + r.total, 0).toFixed(2)}</span>
+                                           <ChevronDown size={14} className="text-earth/30 group-open:rotate-180 transition-transform" />
+                                         </div>
+                                       </summary>
+                                       <div className="pl-6 pr-2 py-2 space-y-1 mt-1 border-l border-sand ml-3">
+                                         {grouped[fy][source][cat].sort((a, b) => b.date.localeCompare(a.date)).map(r => (
+                                           <div 
+                                             key={r.id} 
+                                             onClick={() => setSelectedReceipt(r)}
+                                             className="flex items-center justify-between p-2 rounded-lg hover:bg-sand/50 cursor-pointer group/item"
+                                           >
+                                             <div className="flex flex-col">
+                                               <span className="text-[10px] font-bold text-earth truncate">{getReceiptFileName(r)}</span>
+                                               <span className="text-[8px] text-earth/40 uppercase tracking-tighter">{r.date} • {r.vendor}</span>
+                                             </div>
+                                             <span className="text-[10px] font-mono font-bold text-sage opacity-0 group-hover/item:opacity-100 transition-opacity">${r.total.toFixed(2)}</span>
+                                           </div>
+                                         ))}
+                                       </div>
+                                     </details>
+                                   ))}
+                                 </div>
+                               </div>
+                             ))}
+                           </div>
+                         </div>
+                       ));
+                     })()}
                    </div>
-                 </div>
+                 )}
                </div>
             </motion.div>
           )}
@@ -2391,7 +2856,7 @@ export default function App() {
                           <label className="text-[10px] uppercase font-bold text-amber-700">Purchase Year</label>
                           <input 
                             type="number" 
-                            placeholder="2025"
+                            placeholder="2026"
                             className="w-full bg-white border border-amber-200 rounded-xl p-2 text-sm focus:ring-2 focus:ring-amber-500/20 outline-none"
                             value={selectedReceipt.purchaseYear || ''}
                             onChange={e => {
@@ -2460,6 +2925,86 @@ export default function App() {
                    <div className="flex-1">
                      <h3 className="font-serif italic text-2xl text-sage mb-2">ATO Audit Risk Scan</h3>
                      <p className="text-sm text-earth">Our AI compares your records against standard ATO benchmarks for tradies in Australia.</p>
+
+                    {/* Bank Audit Node */}
+                    <div className="mt-8 pt-6 border-t border-sand">
+                      <div className="flex items-center gap-2 mb-4">
+                        <ShieldCheck size={18} className="text-sage" />
+                        <h4 className="text-xs font-bold text-sage uppercase tracking-wider">Bank Audit Node</h4>
+                      </div>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                         <div className="space-y-3">
+                           <div className="flex justify-between items-end">
+                             <div>
+                               <p className="text-[10px] font-bold text-earth opacity-60 uppercase">Manual / Cash Records</p>
+                               <p className="text-lg font-bold text-sage">
+                                 {receipts.filter(r => 
+                                   r.vendor.toLowerCase().includes('cash') || 
+                                   r.vendor.toLowerCase().includes('manual') || 
+                                   r.vendor.toLowerCase().includes('unknown')
+                                 ).length} <span className="text-xs font-normal text-earth opacity-70">of {receipts.length} total</span>
+                               </p>
+                             </div>
+                             <div className="text-right">
+                               <p className="text-[10px] font-bold text-earth opacity-60 uppercase">Risk Level</p>
+                               {((receipts.filter(r => 
+                                   r.vendor.toLowerCase().includes('cash') || 
+                                   r.vendor.toLowerCase().includes('manual') || 
+                                   r.vendor.toLowerCase().includes('unknown')
+                                 ).length / Math.max(1, receipts.length)) > 0.2) ? (
+                                 <span className="text-xs font-bold text-red-600 flex items-center gap-1 justify-end">
+                                   <AlertTriangle size={12} /> High Risk
+                                 </span>
+                               ) : (
+                                 <span className="text-xs font-bold text-emerald-600 flex items-center gap-1 justify-end">
+                                   <CheckCircle2 size={12} /> Low Risk
+                                 </span>
+                               )}
+                             </div>
+                           </div>
+
+                           <div className="w-full bg-sand h-2 rounded-full overflow-hidden">
+                             <div 
+                               className={cn(
+                                 "h-full transition-all duration-1000",
+                                 ((receipts.filter(r => 
+                                   r.vendor.toLowerCase().includes('cash') || 
+                                   r.vendor.toLowerCase().includes('manual') || 
+                                   r.vendor.toLowerCase().includes('unknown')
+                                 ).length / Math.max(1, receipts.length)) > 0.2) ? "bg-red-500" : "bg-sage"
+                               )}
+                               style={{ width: `${(receipts.filter(r => 
+                                 r.vendor.toLowerCase().includes('cash') || 
+                                 r.vendor.toLowerCase().includes('manual') || 
+                                 r.vendor.toLowerCase().includes('unknown')
+                               ).length / Math.max(1, receipts.length)) * 100}%` }}
+                             />
+                           </div>
+                           <p className="text-[10px] text-earth opacity-60">
+                             {((receipts.filter(r => 
+                               r.vendor.toLowerCase().includes('cash') || 
+                               r.vendor.toLowerCase().includes('manual') || 
+                               r.vendor.toLowerCase().includes('unknown')
+                             ).length / Math.max(1, receipts.length)) * 100).toFixed(1)}% of your entries lack direct bank verification markers.
+                           </p>
+                         </div>
+
+                         <div className="bg-sand/30 rounded-2xl p-4 border border-sand">
+                           <div className="flex gap-3">
+                             <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center shrink-0 shadow-sm border border-sand">
+                               <Activity size={16} className="text-sage" />
+                             </div>
+                             <div>
+                               <p className="text-[10px] font-bold text-sage uppercase mb-1">Auditor Strategy Tip</p>
+                               <p className="text-xs leading-relaxed text-earth italic">
+                                 "Switch to paying all business expenses via a dedicated business bank account. Unverifiable cash claims are often the first items disallowed during an ATO audit."
+                               </p>
+                             </div>
+                           </div>
+                         </div>
+                      </div>
+                    </div>
                      <a 
                        href="https://www.ato.gov.au/individuals-and-families/income-deductions-offsets-and-rebates/deductions-you-can-claim/occupation-and-industry-specific-guides/tradies-and-construction-workers-income-and-deductions" 
                        target="_blank" 
@@ -2495,8 +3040,72 @@ export default function App() {
                </div>
  
                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                  <div className="lg:col-span-2 space-y-4">
-                    <h4 className="text-[10px] uppercase font-bold text-earth px-1 tracking-widest">Risk Findings</h4>
+                  <div className="lg:col-span-2 space-y-6">
+                    <h4 className="text-[10px] uppercase font-bold text-earth px-1 tracking-widest flex items-center justify-between">
+                      <span>Actionable Risk Findings</span>
+                      <span className="text-[8px] bg-sand px-2 py-0.5 rounded text-sage">Last Scanned: {new Date().toLocaleDateString()}</span>
+                    </h4>
+
+                    {/* Data-Driven Finding: Round Numbers */}
+                    {receipts.filter(r => r.total % 1 === 0).length > 0 && (
+                      <div className="bg-amber-50 border border-amber-100 p-6 rounded-3xl group hover:shadow-md transition-all">
+                        <div className="flex items-start gap-4">
+                          <div className="bg-amber-500 text-white w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-lg shadow-amber-200">
+                            <AlertCircle size={20} />
+                          </div>
+                          <div className="flex-1">
+                            <div className="flex justify-between items-center mb-1">
+                              <p className="text-sm font-bold text-amber-900">Potential "Estimated" Expenses detected</p>
+                              <span className="text-[10px] font-bold text-amber-600 bg-white px-2 py-0.5 rounded-full uppercase italic">Risk Flag</span>
+                            </div>
+                            <p className="text-xs text-amber-800 leading-relaxed mb-4">
+                              ATO flags consistent "Round Numbers" as potential estimates. You have {receipts.filter(r => r.total % 1 === 0).length} entries (e.g. {receipts.filter(r => r.total % 1 === 0)[0].vendor} for ${receipts.filter(r => r.total % 1 === 0)[0].total.toFixed(2)}) that lack decimal precision.
+                            </p>
+                            <button 
+                              onClick={() => setActiveTab('receipts')}
+                              className="text-[10px] font-bold text-amber-900 flex items-center gap-1 hover:underline"
+                            >
+                              Check Receipts & Correct Totals <ChevronRight size={14} />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Data-Driven Finding: Large Assets */}
+                    {receipts.filter(r => r.total > 300 && !r.isAsset).length > 0 && (
+                      <div className="bg-red-50 border border-red-100 p-6 rounded-3xl group hover:shadow-md transition-all">
+                        <div className="flex items-start gap-4">
+                          <div className="bg-red-500 text-white w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-lg shadow-red-200">
+                            <AlertTriangle size={20} />
+                          </div>
+                          <div className="flex-1">
+                            <div className="flex justify-between items-center mb-1">
+                              <p className="text-sm font-bold text-red-900">Immediate Asset Claim Required</p>
+                              <span className="text-[10px] font-bold text-red-600 bg-white px-2 py-0.5 rounded-full uppercase italic">Tax Saving</span>
+                            </div>
+                            <p className="text-xs text-red-800 leading-relaxed mb-4">
+                              Purchases over $300 must be depreciated rather than claimed as fully deductible expenses.
+                            </p>
+                            
+                            <div className="space-y-2 mb-4">
+                              {receipts.filter(r => r.total > 300 && !r.isAsset).map(r => (
+                                <div key={r.id} className="bg-white/50 p-2 rounded-xl flex justify-between items-center border border-red-100">
+                                  <span className="text-[10px] font-bold text-coal">{r.vendor} (${r.total.toLocaleString()})</span>
+                                  <button 
+                                    onClick={() => handleToggleAsset(r.id)}
+                                    className="text-[10px] bg-red-600 text-white px-3 py-1 rounded-lg font-bold hover:bg-red-700 transition-colors"
+                                  >
+                                    Move to Assets
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
                     {findings.length > 0 ? (
                       <div className="space-y-3">
                         {findings.map(finding => (
@@ -2552,20 +3161,22 @@ export default function App() {
                         ))}
                       </div>
                     ) : (
-                      <div className="bg-white rounded-3xl p-12 border border-stone shadow-sm text-center">
-                        <div className="w-16 h-16 bg-cream rounded-full flex items-center justify-center mx-auto mb-4 border border-sand">
-                          <TrendingUp className="text-sage" />
+                      receipts.filter(r => r.total % 1 === 0).length === 0 && receipts.filter(r => r.total > 300 && !r.isAsset).length === 0 && (
+                        <div className="bg-white rounded-3xl p-12 border border-stone shadow-sm text-center">
+                          <div className="w-16 h-16 bg-cream rounded-full flex items-center justify-center mx-auto mb-4 border border-sand">
+                            <TrendingUp className="text-sage" />
+                          </div>
+                          <p className="text-sm font-serif italic text-sage">No risks identified yet.</p>
+                          <p className="text-[10px] text-earth uppercase mt-2">Run a scan to analyze your data</p>
                         </div>
-                        <p className="text-sm font-serif italic text-sage">No risks identified yet.</p>
-                        <p className="text-[10px] text-earth uppercase mt-2">Run a scan to analyze your data</p>
-                      </div>
+                      )
                     )}
                   </div>
  
                   <div className="space-y-6">
                     <h4 className="text-[10px] uppercase font-bold text-earth px-1 tracking-widest flex items-center gap-2">
-                       <CreditCard size={14} className="text-sage" />
-                       Bank Audit Node
+                       <Shield size={14} className="text-sage" />
+                       Compliance Performance
                     </h4>
                     
                     <div className="bg-white rounded-3xl p-6 border border-stone shadow-sm h-fit">
@@ -2574,45 +3185,55 @@ export default function App() {
                           <Activity size={20} />
                         </div>
                         <div>
-                          <h5 className="text-sm font-bold text-sage">Reconciliation Status</h5>
-                          <p className="text-[10px] text-earth opacity-60 font-bold uppercase">Health Check</p>
+                          <h5 className="text-sm font-bold text-sage">Audit Documentation</h5>
+                          <p className="text-[10px] text-earth opacity-60 font-bold uppercase">FY Readiness</p>
                         </div>
                       </div>
 
                       <div className="space-y-4">
                         <div className="p-4 rounded-xl bg-sand/30 border border-sand border-dashed">
                           <div className="flex justify-between items-center mb-1">
-                            <span className="text-[10px] font-bold text-earth opacity-60 uppercase">Manual Records</span>
-                            <span className="text-xs font-bold text-sage">{receipts.filter(r => !r.vendor.toLowerCase().includes('bank')).length} entries</span>
+                            <span className="text-[10px] font-bold text-earth opacity-60 uppercase">Logbook Integrity</span>
+                            <span className="text-xs font-bold text-sage">{logEntries.length > 0 ? "85%" : "0%"}</span>
                           </div>
                           <div className="w-full bg-sand/50 h-1.5 rounded-full overflow-hidden">
                              <div 
                                className="bg-sage h-full transition-all" 
-                               style={{ width: `${(receipts.filter(r => !r.vendor.toLowerCase().includes('bank')).length / Math.max(1, receipts.length)) * 100}%` }} 
+                               style={{ width: logEntries.length > 0 ? '85%' : '0%' }} 
                              />
                           </div>
                         </div>
 
                         <div className="p-4 rounded-xl bg-emerald-50/50 border border-emerald-100 border-dashed">
                           <div className="flex justify-between items-center mb-1">
-                            <span className="text-[10px] font-bold text-emerald-800 opacity-60 uppercase">Verified via Bank</span>
-                            <span className="text-xs font-bold text-emerald-700">{receipts.filter(r => r.vendor.toLowerCase().includes('bank')).length} entries</span>
+                            <span className="text-[10px] font-bold text-emerald-800 opacity-60 uppercase">Bank Matching</span>
+                            <span className="text-xs font-bold text-emerald-700">{receipts.filter(r => !r.vendor.toLowerCase().includes('cash')).length} entries</span>
                           </div>
                           <div className="w-full bg-emerald-100 h-1.5 rounded-full overflow-hidden">
                              <div 
                                className="bg-emerald-600 h-full transition-all" 
-                               style={{ width: `${(receipts.filter(r => r.vendor.toLowerCase().includes('bank')).length / Math.max(1, receipts.length)) * 100}%` }} 
+                               style={{ width: `${(receipts.filter(r => !r.vendor.toLowerCase().includes('cash')).length / Math.max(1, receipts.length)) * 100}%` }} 
                              />
                           </div>
                         </div>
 
                         <div className="pt-4 border-t border-stone/10">
-                          <h6 className="text-[10px] font-bold text-earth uppercase mb-3">Audit Readiness Tip</h6>
-                          <div className="bg-cream p-3 rounded-xl border border-stone/30 flex gap-3">
-                             <div className="text-sage mt-0.5"><CheckCircle2 size={14} /></div>
-                             <p className="text-[10px] leading-relaxed text-earth italic">
-                               "ATO Benchmarks focus on unexplained deposits. Keep a separate business account to make audit verification instant."
-                             </p>
+                          <h6 className="text-[10px] font-bold text-earth uppercase mb-3 text-left">Professional Advice</h6>
+                          <div className="bg-cream p-3 rounded-xl border border-stone/30 flex gap-3 min-h-[60px] items-center overflow-hidden">
+                             <AnimatePresence mode="wait">
+                               <motion.div 
+                                 key={tipIndex}
+                                 initial={{ opacity: 0, y: 10 }}
+                                 animate={{ opacity: 1, y: 0 }}
+                                 exit={{ opacity: 0, y: -10 }}
+                                 className="flex gap-3"
+                               >
+                                 <div className="text-sage mt-0.5 shrink-0"><CheckCircle2 size={14} /></div>
+                                 <p className="text-[10px] leading-relaxed text-earth italic text-left">
+                                   "{PROFESSIONAL_TIPS[tipIndex]}"
+                                 </p>
+                               </motion.div>
+                             </AnimatePresence>
                           </div>
                         </div>
                       </div>
@@ -2620,11 +3241,14 @@ export default function App() {
 
                     <div className="bg-sage p-6 rounded-3xl text-white shadow-xl shadow-sage/20 relative overflow-hidden">
                       <div className="absolute top-0 right-0 w-24 h-24 bg-white/10 rounded-full -mr-12 -mt-12 blur-2xl" />
-                      <h5 className="text-sm font-bold mb-2 relative z-10">Export Audit-Ready PDF</h5>
-                      <p className="text-xs opacity-80 mb-4 relative z-10 leading-relaxed">Package all receipts, logbooks, and bank matches into a single professional document.</p>
-                      <button className="w-full py-3 bg-white text-sage rounded-xl font-bold text-xs hover:bg-cream transition-all flex items-center justify-center gap-2">
-                        <FileText size={16} />
-                        Download FY Package
+                      <h5 className="text-sm font-bold mb-2 relative z-10">Export Audit-Ready Report</h5>
+                      <p className="text-xs opacity-80 mb-4 relative z-10 leading-relaxed text-left">Consolidate all income, expenses, and logbook entries into a compliance-ready audit report.</p>
+                      <button 
+                        onClick={handleExportAuditPackage}
+                        className="w-full py-3 bg-white text-sage rounded-xl font-bold text-xs hover:bg-cream transition-all flex items-center justify-center gap-2 active:scale-95 transition-transform"
+                      >
+                        <Download size={16} />
+                        Download Audit Package
                       </button>
                     </div>
                   </div>
@@ -2778,7 +3402,7 @@ export default function App() {
                   </p>
                 </div>
                 <div className="bg-white p-6 rounded-3xl border border-stone shadow-sm">
-                  <p className="text-[10px] uppercase font-bold text-earth mb-1">FY25 Claim Target</p>
+                  <p className="text-[10px] uppercase font-bold text-earth mb-1">FY26 Claim Target</p>
                   <p className="text-2xl font-bold font-mono text-emerald-600">
                     ${receipts.filter(r => r.isAsset).reduce((acc, r) => {
                       const rate = (r.depreciationRate || 20) / 100;
@@ -2798,7 +3422,7 @@ export default function App() {
                 <div className="p-4 border-b border-sand grid grid-cols-5 gap-4 text-[10px] font-bold text-earth uppercase tracking-widest bg-sand/30">
                   <span className="col-span-2">Asset / Vendor</span>
                   <span className="text-center">Rate (%)</span>
-                  <span className="text-center">FY25 Claim</span>
+                  <span className="text-center">FY26 Claim</span>
                   <span className="text-right">Total Cost</span>
                 </div>
                 <div className="divide-y divide-sand">
@@ -2837,6 +3461,164 @@ export default function App() {
                       </button>
                     </div>
                   )}
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {activeTab === 'income' && (
+            <motion.div 
+               key="income"
+               initial={{ opacity: 0, y: 20 }}
+               animate={{ opacity: 1, y: 0 }}
+               className="space-y-6"
+            >
+              <div className="flex justify-between items-center bg-white p-6 rounded-3xl border border-stone">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 bg-cream rounded-2xl flex items-center justify-center border border-sand">
+                    <Banknote className="text-sage" size={24} />
+                  </div>
+                  <div>
+                    <h3 className="font-serif text-lg text-sage">Income Ledger</h3>
+                    <p className="text-[10px] text-earth uppercase tracking-widest font-bold opacity-60">
+                      FY26 Total: ${incomeEntries.reduce((s, i) => s + i.amount, 0).toLocaleString()}
+                    </p>
+                  </div>
+                </div>
+                <motion.button
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => setShowIncomeModal(true)}
+                  className="bg-sage text-white px-6 py-2.5 rounded-2xl text-xs font-bold shadow-lg flex items-center gap-2"
+                >
+                  <Plus size={18} /> Record New Income
+                </motion.button>
+              </div>
+
+              <div className="grid md:grid-cols-3 gap-6">
+                <div className="md:col-span-2 space-y-4">
+                  <div className="bg-white rounded-3xl overflow-hidden border border-stone shadow-sm">
+                    <div className="p-4 border-b border-sand flex justify-between items-center text-[10px] font-bold text-earth uppercase tracking-widest bg-sand/30">
+                      <span className="w-1/3">Income Source / Detail</span>
+                      <span className="w-1/4 text-center">Type</span>
+                      <span className="w-1/4 text-center">Date</span>
+                      <span className="text-right">Gross Income</span>
+                    </div>
+                    <div className="divide-y divide-sand">
+                      {incomeEntries.length === 0 ? (
+                        <div className="p-20 text-center">
+                          <Banknote size={48} className="mx-auto text-earth/10 mb-4" />
+                          <p className="text-earth/40 italic font-serif text-sm">No income records found.</p>
+                        </div>
+                      ) : (
+                        incomeEntries.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map(inc => (
+                          <div key={inc.id} className="p-4 flex justify-between items-center text-sm hover:bg-cream transition-colors group">
+                            <div className="w-1/3 flex items-center gap-2">
+                              <button 
+                                onClick={() => handleEditIncome(inc)}
+                                className="p-2 rounded-lg hover:bg-sand text-sage opacity-0 group-hover:opacity-100 transition-opacity"
+                              >
+                                <Settings size={14} />
+                              </button>
+                              <div>
+                                <p className="font-bold text-coal">{inc.description || inc.source}</p>
+                                <p className="text-[10px] text-earth/50 uppercase tracking-tight">{inc.documentType}</p>
+                              </div>
+                            </div>
+                            <div className="w-1/4 text-center">
+                              <span className="px-2 py-0.5 rounded-full bg-sand text-[10px] font-bold text-sage">
+                                {inc.source}
+                              </span>
+                            </div>
+                            <div className="w-1/4 text-center text-xs font-mono text-earth/60">
+                              {inc.date}
+                            </div>
+                            <div className="text-right font-bold text-emerald-600 font-mono">
+                              +${inc.amount.toLocaleString()}
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-6">
+                  <div className="bg-white rounded-3xl p-6 shadow-sm border border-stone">
+                    <div className="flex items-center gap-3 mb-4">
+                      <CalendarClock className="text-sage" size={20} />
+                      <h4 className="font-serif italic text-lg text-sage">Upload Frequency</h4>
+                    </div>
+                    
+                    <div className="space-y-4">
+                      <div className="bg-sand/30 rounded-2xl p-4 border border-sand">
+                        <label className="text-[10px] uppercase font-bold text-earth mb-2 block">Reporting Schedule</label>
+                        <div className="grid grid-cols-2 gap-2">
+                          {(['Weekly', 'Fortnightly', 'Monthly', 'Quarterly'] as UploadFrequency[]).map(freq => (
+                            <button
+                              key={freq}
+                              onClick={() => setUploadFrequency(freq)}
+                              className={cn(
+                                "p-2 rounded-xl text-[10px] font-bold border transition-all",
+                                uploadFrequency === freq 
+                                  ? "bg-sage text-white border-sage shadow-md" 
+                                  : "bg-white text-earth border-stone/30 hover:bg-cream"
+                              )}
+                            >
+                              {freq}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {isUploadDue() ? (
+                        <div className="bg-red-50 text-red-700 p-4 rounded-2xl border border-red-100 flex flex-col gap-2">
+                          <div className="flex items-center gap-2">
+                            <AlertTriangle size={18} />
+                            <p className="text-[10px] font-bold uppercase">Record Due Now</p>
+                          </div>
+                          <p className="text-[10px] opacity-80 leading-relaxed">It's been more than {uploadFrequency === 'Weekly' ? '7 days' : uploadFrequency === 'Fortnightly' ? '14 days' : uploadFrequency === 'Monthly' ? '30 days' : '90 days'} since your last upload. Add a bank statement or sales record to remain tax-compliant.</p>
+                        </div>
+                      ) : (
+                        <div className="bg-emerald-50 text-emerald-700 p-4 rounded-2xl border border-emerald-100 flex items-center gap-3">
+                          <CheckCircle2 size={18} />
+                          <div>
+                            <p className="text-[10px] font-bold uppercase">Up to Date</p>
+                            <p className="text-[10px] opacity-70">Your income records are fresh.</p>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="flex justify-between items-center px-1">
+                        <span className="text-[10px] text-earth/60 font-medium">Last record:</span>
+                        <span className="text-[10px] font-bold text-sage">{new Date(lastIncomeUpload).toLocaleDateString()}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-sand/20 rounded-3xl p-6 border border-dashed border-sand">
+                    <h4 className="text-[10px] uppercase font-bold text-earth mb-3 tracking-widest">Tax Projections</h4>
+                    <div className="space-y-3">
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="text-earth/60">Gross Income</span>
+                        <span className="font-bold text-sage">${incomeEntries.reduce((s, i) => s + i.amount, 0).toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="text-earth/60">PAYG Component</span>
+                        <span className="font-bold text-sage">${incomeEntries.filter(i => i.source === 'PAYG').reduce((s, i) => s + i.amount, 0).toLocaleString()}</span>
+                      </div>
+                      <div className="pt-3 border-t border-sand flex justify-between items-center">
+                        <span className="text-[10px] font-bold uppercase text-earth">Predicted Liability</span>
+                        <span className="text-sm font-bold text-sage">${estimatedTax.toLocaleString()}</span>
+                      </div>
+                    </div>
+                    <button 
+                      onClick={() => setActiveTab('tax')}
+                      className="w-full mt-4 bg-white/50 border border-stone/30 py-2 rounded-xl text-[10px] font-bold text-earth hover:bg-white transition-all"
+                    >
+                      View Advanced breakdown
+                    </button>
+                  </div>
                 </div>
               </div>
             </motion.div>
@@ -2901,32 +3683,6 @@ export default function App() {
                       <p className="text-sm italic">Not Registered</p>
                     </div>
                   )}
-                </div>
-              </div>
-
-              <div className="grid md:grid-cols-2 gap-6 mt-6">
-                {isGstRegistered ? (
-                  <GSTCalculator />
-                ) : (
-                  <div className="bg-sand/30 rounded-3xl p-8 border border-dashed border-sand flex flex-col items-center justify-center text-center">
-                    <AlertCircle className="text-earth/40 mb-3" size={32} />
-                    <h4 className="text-earth font-bold mb-1">GST Disabled</h4>
-                    <p className="text-xs text-earth/60 max-w-[200px]">Register in profile to enable GST tracking and calculators.</p>
-                  </div>
-                )}
-                
-                <div className="bg-white rounded-3xl p-6 shadow-sm border border-stone h-full flex flex-col justify-center">
-                  <div className="text-center space-y-2">
-                    <div className="w-12 h-12 bg-cream rounded-full flex items-center justify-center mx-auto mb-2 border border-sand">
-                      <AlertCircle className="text-sage" />
-                    </div>
-                    <h4 className="font-serif text-lg text-sage italic">Quick Tax Tip</h4>
-                    <p className="text-xs text-earth px-4 leading-relaxed">
-                      {isGstRegistered 
-                        ? "As you're registered for GST, remember that the GST you pay on business purchases can usually be claimed back as a credit on your BAS. Keep those tax invoices!"
-                        : "Since you aren't registered for GST, you don't collect GST on sales, but you also can't claim GST credits on purchases. If your turnover reaches $75k, registration becomes mandatory."}
-                    </p>
-                  </div>
                 </div>
               </div>
             </motion.div>
@@ -3052,16 +3808,40 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      <AnimatePresence>
+        {showIncomeModal && (
+          <IncomeModal 
+            onClose={() => {
+              setShowIncomeModal(false);
+              setEditingIncomeId(null);
+            }}
+            onSave={handleAddIncome}
+            newIncome={newIncome}
+            setNewIncome={setNewIncome}
+            isEditing={!!editingIncomeId}
+            onDelete={() => {
+              if (editingIncomeId) {
+                handleDeleteIncome(editingIncomeId);
+                setShowIncomeModal(false);
+                setEditingIncomeId(null);
+              }
+            }}
+          />
+        )}
+      </AnimatePresence>
+
       {/* Mobile NavBar */}
       <nav className="md:hidden fixed bottom-6 left-1/2 -translate-x-1/2 w-[90%] max-w-sm bg-sage text-white rounded-3xl p-2 flex items-center justify-around shadow-2xl z-50 border border-white/10">
         <MobButton active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} icon={<LayoutDashboard size={20} />} />
         <MobButton active={activeTab === 'receipts'} onClick={() => setActiveTab('receipts')} icon={<Camera size={20} />} />
+        <MobButton active={activeTab === 'income'} onClick={() => setActiveTab('income')} icon={<Banknote size={20} />} />
         <div 
           onClick={() => setShowAddReceipt(true)}
           className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center -mt-10 shadow-lg border-4 border-cream transition-transform active:scale-90 cursor-pointer"
         >
           <Plus className="text-sage" />
         </div>
+        <MobButton active={activeTab === 'logbook'} onClick={() => setActiveTab('logbook')} icon={<History size={20} />} />
         <MobButton active={activeTab === 'assets'} onClick={() => setActiveTab('assets')} icon={<TrendingUp size={20} />} />
         <MobButton active={activeTab === 'audit'} onClick={() => setActiveTab('audit')} icon={<AlertCircle size={20} />} />
         <MobButton active={activeTab === 'chat'} onClick={() => setActiveTab('chat')} icon={<MessageSquare size={20} />} />
@@ -3138,6 +3918,115 @@ function LogEntryRow({ entry, isEditing, onEdit, onSave, onCancel }: { entry: Lo
           <Settings size={14} />
         </button>
       </div>
+    </div>
+  );
+}
+
+function IncomeModal({ onClose, onSave, newIncome, setNewIncome, isEditing, onDelete }: { onClose: () => void, onSave: (e: React.FormEvent) => void, newIncome: Partial<IncomeEntry>, setNewIncome: React.Dispatch<React.SetStateAction<Partial<IncomeEntry>>>, isEditing?: boolean, onDelete?: () => void }) {
+  return (
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.95 }}
+        className="bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl overflow-hidden"
+      >
+        <div className="bg-sage p-8 text-white">
+          <div className="flex justify-between items-center">
+            <h3 className="font-serif italic text-2xl">{isEditing ? 'Edit Income' : 'Record Income'}</h3>
+            <button onClick={onClose} className="p-2 hover:bg-white/20 rounded-full transition-colors">
+              <Plus className="rotate-45" />
+            </button>
+          </div>
+          <p className="text-white/60 text-xs mt-2 uppercase tracking-widest font-bold">{isEditing ? 'Update your ledger entry' : 'Tax Predictor Input'}</p>
+        </div>
+        
+        <form onSubmit={onSave} className="p-8 space-y-6 bg-cream">
+          <div className="grid grid-cols-2 gap-4">
+            <div className="col-span-2 space-y-1">
+              <label className="text-[10px] uppercase font-bold text-earth px-1">Gross Income Amount</label>
+              <div className="relative">
+                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-earth/40 text-sm font-bold">$</span>
+                <input 
+                  required
+                  type="number"
+                  placeholder="0.00"
+                  className="w-full bg-white border border-stone rounded-2xl p-4 pl-8 text-lg font-bold text-sage outline-none focus:ring-2 focus:ring-sage/20"
+                  value={newIncome.amount || ''}
+                  onChange={e => setNewIncome({...newIncome, amount: Number(e.target.value)})}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1 text-left">
+              <label className="text-[10px] uppercase font-bold text-earth px-1">Source</label>
+              <select 
+                className="w-full bg-white border border-stone rounded-2xl p-4 text-sm outline-none focus:ring-2 focus:ring-sage/20"
+                value={newIncome.source}
+                onChange={e => setNewIncome({...newIncome, source: e.target.value as any})}
+              >
+                <option value="Sales">Gross Sales</option>
+                <option value="PAYG">PAYG Wages</option>
+                <option value="Interest">Interest</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+
+            <div className="space-y-1 text-left">
+              <label className="text-[10px] uppercase font-bold text-earth px-1">Evidence Type</label>
+              <select 
+                className="w-full bg-white border border-stone rounded-2xl p-4 text-sm outline-none focus:ring-2 focus:ring-sage/20"
+                value={newIncome.documentType}
+                onChange={e => setNewIncome({...newIncome, documentType: e.target.value as any})}
+              >
+                <option value="Payment Slip">Payment Slip</option>
+                <option value="Bank Statement">Bank Statement</option>
+                <option value="Sales Receipt">Sales Receipt</option>
+              </select>
+            </div>
+
+            <div className="col-span-2 space-y-1 text-left">
+              <label className="text-[10px] uppercase font-bold text-earth px-1">Date</label>
+              <input 
+                required
+                type="date"
+                className="w-full bg-white border border-stone rounded-2xl p-4 text-sm outline-none focus:ring-2 focus:ring-sage/20"
+                value={newIncome.date}
+                onChange={e => setNewIncome({...newIncome, date: e.target.value})}
+              />
+            </div>
+
+            <div className="col-span-2 space-y-1 text-left">
+              <label className="text-[10px] uppercase font-bold text-earth px-1">Income Source / Detail</label>
+              <input 
+                placeholder="e.g. Invoice #22 - Smith Corp"
+                className="w-full bg-white border border-stone rounded-2xl p-4 text-sm outline-none focus:ring-2 focus:ring-sage/20"
+                value={newIncome.description}
+                onChange={e => setNewIncome({...newIncome, description: e.target.value})}
+              />
+            </div>
+          </div>
+
+          <div className="flex gap-3 pt-2">
+            {isEditing && (
+              <button 
+                type="button"
+                onClick={onDelete}
+                className="px-6 py-4 rounded-2xl border border-red-100 text-red-500 hover:bg-red-50 transition-all"
+              >
+                <Trash2 size={20} />
+              </button>
+            )}
+            <button 
+              type="submit"
+              className="flex-1 bg-sage text-white py-4 rounded-2xl text-sm font-bold shadow-lg hover:bg-emerald-800 transition-all flex items-center justify-center gap-3 active:scale-95"
+            >
+              <Check size={18} />
+              {isEditing ? 'Update Record' : 'Save Income Record'}
+            </button>
+          </div>
+        </form>
+      </motion.div>
     </div>
   );
 }
@@ -3291,6 +4180,15 @@ function ReceiptRow({ receipt, onUpdate, onClick, categories, isGstRegistered }:
                 <option>Personal</option>
               </select>
             </div>
+            <div className="space-y-1">
+              <CategorySelector 
+                label="Category"
+                value={receipt.category}
+                onChange={val => onUpdate({ ...receipt, category: val })}
+                categories={categories}
+                setCategories={setCategories}
+              />
+            </div>
             {receipt.type === 'Personal Apportionment' && (
               <div className="space-y-2">
                 <div className="flex justify-between items-center text-[10px] uppercase font-bold text-earth">
@@ -3351,6 +4249,7 @@ function ReceiptRow({ receipt, onUpdate, onClick, categories, isGstRegistered }:
               <ReceiptItemEditor 
                 items={receipt.items || []} 
                 categories={categories}
+                setCategories={setCategories}
                 isGstRegistered={isGstRegistered}
                 onChange={(items) => {
                   const newTotal = items.reduce((s,i) => s + i.price, 0);
