@@ -162,24 +162,125 @@ const VENDOR_CATEGORY_MAP: { [key: string]: string } = {
   'tradelink': 'Materials',
   'l&h': 'Materials',
   'middy': 'Materials',
+  'tjs': 'Materials',
+  'john r turk': 'Materials',
+  'haymans': 'Materials',
+  'sherriff': 'Materials',
+  'bursons': 'Vehicle Maintenance',
+  'repco': 'Vehicle Maintenance',
+  'supercheap': 'Vehicle Maintenance',
   'shell': 'Fuel & Oil',
   'bp': 'Fuel & Oil',
   'caltex': 'Fuel & Oil',
   'ampol': 'Fuel & Oil',
   '7-eleven': 'Fuel & Oil',
   'united': 'Fuel & Oil',
+  'freeway': 'Fuel & Oil',
   'officeworks': 'Office & Admin',
   'jb hi-fi': 'Office & Admin',
   'apple': 'Office & Admin',
   'post': 'Office & Admin',
-  'repco': 'Vehicle Maintenance',
-  'supercheap': 'Vehicle Maintenance',
+  'telstra': 'Office & Admin',
+  'optus': 'Office & Admin',
+  'vodafone': 'Office & Admin',
+  'belong': 'Office & Admin',
+  'aussie broadband': 'Office & Admin',
   'nrma': 'Insurance',
   'racv': 'Insurance',
+  'allianz': 'Insurance',
+  'gio': 'Insurance',
+  'aami': 'Insurance',
   'facebook': 'Marketing',
   'google': 'Marketing',
   'vistaprint': 'Marketing',
+  'hipages': 'Marketing',
+  'serviceseeking': 'Marketing',
+  'oneflare': 'Marketing',
+  'yellow pages': 'Marketing',
+  'atf': 'Plant & Equipment Hire',
+  'kennards': 'Plant & Equipment Hire',
+  'h Coates': 'Plant & Equipment Hire',
+  'hire': 'Plant & Equipment Hire',
 };
+
+interface CategorySelectorProps {
+  value: string;
+  onChange: (val: string) => void;
+  categories: string[];
+  setCategories: React.Dispatch<React.SetStateAction<string[]>>;
+  label?: string;
+  isSuggested?: boolean;
+}
+
+function CategorySelector({ value, onChange, categories, setCategories, label, isSuggested }: CategorySelectorProps) {
+  const [isAdding, setIsAdding] = useState(false);
+  const [newName, setNewName] = useState('');
+
+  const handleAdd = () => {
+    if (newName.trim()) {
+      const cat = newName.trim();
+      setCategories(prev => prev.includes(cat) ? prev : [...prev, cat]);
+      onChange(cat);
+      setNewName('');
+      setIsAdding(false);
+    }
+  };
+
+  return (
+    <div className="space-y-1 w-full">
+      <div className="flex justify-between items-center px-1">
+        <label className="text-[10px] uppercase font-bold text-earth flex items-center gap-2">
+          {label || 'Category'}
+          {isSuggested && (
+            <span className="text-[8px] bg-sage/10 text-sage px-1.5 py-0.5 rounded-full border border-sage/20 animate-pulse">Suggested</span>
+          )}
+        </label>
+        <button 
+          type="button"
+          onClick={() => setIsAdding(!isAdding)}
+          className="text-[10px] font-bold text-sage hover:underline"
+        >
+          {isAdding ? 'Cancel' : '+ Custom'}
+        </button>
+      </div>
+      
+      {isAdding ? (
+        <div className="flex gap-2">
+          <input 
+            autoFocus
+            placeholder="New Category"
+            className="flex-1 bg-white border border-stone rounded-xl p-3 text-sm outline-none shadow-sm focus:ring-2 focus:ring-sage/20"
+            value={newName}
+            onChange={e => setNewName(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                handleAdd();
+              }
+            }}
+          />
+          <button 
+            type="button"
+            onClick={handleAdd}
+            className="bg-sage text-white px-3 rounded-xl hover:bg-emerald-900 transition-colors shadow-sm"
+          >
+            <Plus size={16} />
+          </button>
+        </div>
+      ) : (
+        <select 
+          className="w-full bg-cream border border-stone rounded-xl p-3 text-sm outline-none shadow-sm cursor-pointer hover:border-sage/50 transition-colors"
+          value={value}
+          onChange={e => onChange(e.target.value)}
+        >
+          {categories.map(cat => (
+            <option key={cat}>{cat}</option>
+          ))}
+        </select>
+      )}
+    </div>
+  );
+}
 
 function GSTCalculator() {
   const [amount, setAmount] = useState<number | ''>('');
@@ -266,10 +367,11 @@ interface ReceiptItemEditorProps {
   onChange: (items: ReceiptItem[]) => void;
   onTotalChange?: (total: number) => void;
   categories: string[];
+  setCategories: React.Dispatch<React.SetStateAction<string[]>>;
   isGstRegistered: boolean;
 }
 
-function ReceiptItemEditor({ items, onChange, onTotalChange, categories, isGstRegistered }: ReceiptItemEditorProps) {
+function ReceiptItemEditor({ items, onChange, onTotalChange, categories, setCategories, isGstRegistered }: ReceiptItemEditorProps) {
   const addItem = () => {
     const newItem: ReceiptItem = { 
       id: Math.random().toString(36).substr(2, 5), 
@@ -331,16 +433,15 @@ function ReceiptItemEditor({ items, onChange, onTotalChange, categories, isGstRe
               />
             </div>
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <select 
-                  className="bg-white border border-stone rounded-lg px-2 py-1 text-[10px] outline-none"
+              <div className="flex-1 max-w-[200px]">
+                <CategorySelector 
                   value={item.category}
-                  onChange={e => updateItem(idx, { category: e.target.value })}
-                >
-                  {categories.map(cat => (
-                    <option key={cat}>{cat}</option>
-                  ))}
-                </select>
+                  onChange={val => updateItem(idx, { category: val })}
+                  categories={categories}
+                  setCategories={setCategories}
+                />
+              </div>
+              <div className="flex items-center gap-4 flex-1 justify-end">
                 {isGstRegistered && (
                   <div className="flex items-center gap-3">
                     <label className="flex items-center gap-2 cursor-pointer">
@@ -887,6 +988,7 @@ export default function App() {
   const [isScanning, setIsScanning] = useState(false);
   const [tipIndex, setTipIndex] = useState(0);
   const [isSuggestingCategory, setIsSuggestingCategory] = useState(false);
+  const [wasCategorySuggested, setWasCategorySuggested] = useState(false);
   const [toast, setToast] = useState<{message: string; type: 'success' | 'error'} | null>(null);
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
@@ -2156,6 +2258,7 @@ Certified by TradieTax AI Compliance Engine v2.0
                                  for (const [key, cat] of Object.entries(VENDOR_CATEGORY_MAP)) {
                                    if (lowerVendor.includes(key)) {
                                      setNewReceipt(prev => ({ ...prev, category: cat }));
+                                     setWasCategorySuggested(true);
                                      matched = true;
                                      break;
                                    }
@@ -2165,6 +2268,7 @@ Certified by TradieTax AI Compliance Engine v2.0
                                    const suggested = await suggestCategory(newReceipt.vendor, categories);
                                    if (suggested) {
                                      setNewReceipt(prev => ({ ...prev, category: suggested }));
+                                     setWasCategorySuggested(true);
                                    }
                                    setIsSuggestingCategory(false);
                                  }
@@ -2179,11 +2283,13 @@ Certified by TradieTax AI Compliance Engine v2.0
                                for (const [key, cat] of Object.entries(VENDOR_CATEGORY_MAP)) {
                                  if (lowerVendor.includes(key)) {
                                    suggestedCategory = cat;
+                                   suggested = true;
                                    break;
                                  }
                                }
                                
                                setNewReceipt({...newReceipt, vendor, category: suggestedCategory});
+                               setWasCategorySuggested(suggested);
                              }}
                            />
                            {isSuggestingCategory && (
@@ -2242,65 +2348,18 @@ Certified by TradieTax AI Compliance Engine v2.0
                              }}
                            />
                          </div>
-                          <div className="space-y-1">
-                            <div className="flex justify-between items-center px-1">
-                              <label className="text-[10px] uppercase font-bold text-earth">Expense Category</label>
-                              <button 
-                                type="button"
-                                onClick={() => setIsAddingCategory(!isAddingCategory)}
-                                className="text-[10px] font-bold text-sage hover:underline"
-                              >
-                                {isAddingCategory ? 'Cancel' : '+ Custom'}
-                              </button>
-                            </div>
-                            
-                            {isAddingCategory ? (
-                              <div className="flex gap-2">
-                                <input 
-                                  placeholder="New Category"
-                                  className="flex-1 bg-white border border-stone rounded-xl p-3 text-sm outline-none"
-                                  value={newCategoryName}
-                                  onChange={e => setNewCategoryName(e.target.value)}
-                                  onKeyDown={e => {
-                                    if (e.key === 'Enter') {
-                                      e.preventDefault();
-                                      if (newCategoryName.trim()) {
-                                        const cat = newCategoryName.trim();
-                                        setCategories(prev => prev.includes(cat) ? prev : [...prev, cat]);
-                                        setNewReceipt({...newReceipt, category: cat});
-                                        setNewCategoryName('');
-                                        setIsAddingCategory(false);
-                                      }
-                                    }
-                                  }}
-                                />
-                                <button 
-                                  type="button"
-                                  onClick={() => {
-                                    if (newCategoryName.trim()) {
-                                      const cat = newCategoryName.trim();
-                                      setCategories(prev => prev.includes(cat) ? prev : [...prev, cat]);
-                                      setNewReceipt({...newReceipt, category: cat});
-                                      setNewCategoryName('');
-                                      setIsAddingCategory(false);
-                                    }
-                                  }}
-                                  className="bg-sage text-white px-3 rounded-xl hover:bg-emerald-900 transition-colors"
-                                >
-                                  <Plus size={16} />
-                                </button>
-                              </div>
-                            ) : (
-                              <select 
-                                className="w-full bg-cream border border-stone rounded-xl p-3 text-sm outline-none"
-                                value={newReceipt.category}
-                                onChange={e => setNewReceipt({...newReceipt, category: e.target.value})}
-                              >
-                                {categories.map(cat => (
-                                  <option key={cat}>{cat}</option>
-                                ))}
-                              </select>
-                            )}
+                          <div className="col-span-1">
+                            <CategorySelector 
+                              label="Expense Category"
+                              value={newReceipt.category}
+                              onChange={val => {
+                                setNewReceipt({...newReceipt, category: val});
+                                setWasCategorySuggested(false);
+                              }}
+                              categories={categories}
+                              setCategories={setCategories}
+                              isSuggested={wasCategorySuggested}
+                            />
                           </div>
                          <div className="space-y-1">
                            <label className="text-[10px] uppercase font-bold text-earth px-1">Tax Type</label>
@@ -2360,6 +2419,7 @@ Certified by TradieTax AI Compliance Engine v2.0
                              items={newReceipt.items || []}
                              onChange={(items) => setNewReceipt({ ...newReceipt, items })}
                              categories={categories}
+                             setCategories={setCategories}
                              isGstRegistered={isGstRegistered}
                              onTotalChange={(total) => setNewReceipt({ 
                                ...newReceipt, 
@@ -4120,6 +4180,15 @@ function ReceiptRow({ receipt, onUpdate, onClick, categories, isGstRegistered }:
                 <option>Personal</option>
               </select>
             </div>
+            <div className="space-y-1">
+              <CategorySelector 
+                label="Category"
+                value={receipt.category}
+                onChange={val => onUpdate({ ...receipt, category: val })}
+                categories={categories}
+                setCategories={setCategories}
+              />
+            </div>
             {receipt.type === 'Personal Apportionment' && (
               <div className="space-y-2">
                 <div className="flex justify-between items-center text-[10px] uppercase font-bold text-earth">
@@ -4180,6 +4249,7 @@ function ReceiptRow({ receipt, onUpdate, onClick, categories, isGstRegistered }:
               <ReceiptItemEditor 
                 items={receipt.items || []} 
                 categories={categories}
+                setCategories={setCategories}
                 isGstRegistered={isGstRegistered}
                 onChange={(items) => {
                   const newTotal = items.reduce((s,i) => s + i.price, 0);
