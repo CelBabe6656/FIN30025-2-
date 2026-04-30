@@ -1,20 +1,53 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# TradieTax
 
-# Run and deploy your AI Studio app
+AI-powered accounting for sole traders. Features receipt capture, tax bill prediction, Bunnings PowerPass splitting, and GST compliance.
 
-This contains everything you need to run your app locally.
+## Getting Started
 
-View your app in AI Studio: https://ai.studio/apps/2688abed-048d-42d8-b742-764cdd554e92
+### Prerequisites
 
-## Run Locally
+- Node.js (v18 or higher)
+- npm
 
-**Prerequisites:**  Node.js
+### Installation
 
+1. Clone the repository
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
+3. Set up your environment variables:
+   - Create a `.env` file based on `.env.example`
+   - Add your `GEMINI_API_KEY`
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+### Running the App
+
+#### Development Mode
+To run the full-stack app (Express server + Vite middleware) in development mode:
+```bash
+npm run dev
+```
+The app will be available at `http://localhost:3000`.
+
+#### Production Mode
+1. Build the frontend:
+   ```bash
+   npm run build
+   ```
+2. Start the production server:
+   ```bash
+   npm run start
+   ```
+
+## Technologies Used
+
+- **Frontend**: React, Vite, Tailwind CSS, Motion, Lucide React, Recharts
+- **Backend**: Node.js, Express
+- **AI**: Google Gemini (@google/genai)
+- **Database/Auth**: Firebase (Firestore)
+
+## Environment Variables
+
+- `GEMINI_API_KEY`: Your Google Gemini API key.
+- `APP_URL`: The URL where the app is hosted (e.g., for OAuth callbacks).
+- `VITE_FIREBASE_REGION`: The region for your Firestore database.

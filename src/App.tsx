@@ -2278,6 +2278,7 @@ Certified by TradieTax AI Compliance Engine v2.0
                                const vendor = e.target.value;
                                const lowerVendor = vendor.toLowerCase();
                                let suggestedCategory = newReceipt.category;
+                               let suggested = false;
                                
                                // Suggest category based on map
                                for (const [key, cat] of Object.entries(VENDOR_CATEGORY_MAP)) {
@@ -2802,6 +2803,7 @@ Certified by TradieTax AI Compliance Engine v2.0
                        <ReceiptItemEditor 
                          items={selectedReceipt.items || []}
                          categories={categories}
+                         setCategories={setCategories}
                          isGstRegistered={isGstRegistered}
                          onChange={(items) => {
                            const updatedReceipt = { ...selectedReceipt, items };
@@ -4106,10 +4108,11 @@ interface ReceiptRowProps {
   onUpdate: (r: ReceiptEntry) => void;
   onClick: () => void;
   categories: string[];
+  setCategories: React.Dispatch<React.SetStateAction<string[]>>;
   isGstRegistered: boolean;
 }
 
-function ReceiptRow({ receipt, onUpdate, onClick, categories, isGstRegistered }: ReceiptRowProps) {
+function ReceiptRow({ receipt, onUpdate, onClick, categories, setCategories, isGstRegistered }: ReceiptRowProps) {
   const [isExpanded, setIsExpanded] = useState(false);
 
   const calculateGST = (r: ReceiptEntry) => {

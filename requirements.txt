@@ -1,0 +1,3 @@
+# Requirements for TradieTax Python Core
+datetime
+math
