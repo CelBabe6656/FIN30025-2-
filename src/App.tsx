@@ -39,7 +39,8 @@ import {
   FolderArchive,
   List,
   Banknote,
-  Trash2
+  Trash2,
+  FileDown
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -162,125 +163,24 @@ const VENDOR_CATEGORY_MAP: { [key: string]: string } = {
   'tradelink': 'Materials',
   'l&h': 'Materials',
   'middy': 'Materials',
-  'tjs': 'Materials',
-  'john r turk': 'Materials',
-  'haymans': 'Materials',
-  'sherriff': 'Materials',
-  'bursons': 'Vehicle Maintenance',
-  'repco': 'Vehicle Maintenance',
-  'supercheap': 'Vehicle Maintenance',
   'shell': 'Fuel & Oil',
   'bp': 'Fuel & Oil',
   'caltex': 'Fuel & Oil',
   'ampol': 'Fuel & Oil',
   '7-eleven': 'Fuel & Oil',
   'united': 'Fuel & Oil',
-  'freeway': 'Fuel & Oil',
   'officeworks': 'Office & Admin',
   'jb hi-fi': 'Office & Admin',
   'apple': 'Office & Admin',
   'post': 'Office & Admin',
-  'telstra': 'Office & Admin',
-  'optus': 'Office & Admin',
-  'vodafone': 'Office & Admin',
-  'belong': 'Office & Admin',
-  'aussie broadband': 'Office & Admin',
+  'repco': 'Vehicle Maintenance',
+  'supercheap': 'Vehicle Maintenance',
   'nrma': 'Insurance',
   'racv': 'Insurance',
-  'allianz': 'Insurance',
-  'gio': 'Insurance',
-  'aami': 'Insurance',
   'facebook': 'Marketing',
   'google': 'Marketing',
   'vistaprint': 'Marketing',
-  'hipages': 'Marketing',
-  'serviceseeking': 'Marketing',
-  'oneflare': 'Marketing',
-  'yellow pages': 'Marketing',
-  'atf': 'Plant & Equipment Hire',
-  'kennards': 'Plant & Equipment Hire',
-  'h Coates': 'Plant & Equipment Hire',
-  'hire': 'Plant & Equipment Hire',
 };
-
-interface CategorySelectorProps {
-  value: string;
-  onChange: (val: string) => void;
-  categories: string[];
-  setCategories: React.Dispatch<React.SetStateAction<string[]>>;
-  label?: string;
-  isSuggested?: boolean;
-}
-
-function CategorySelector({ value, onChange, categories, setCategories, label, isSuggested }: CategorySelectorProps) {
-  const [isAdding, setIsAdding] = useState(false);
-  const [newName, setNewName] = useState('');
-
-  const handleAdd = () => {
-    if (newName.trim()) {
-      const cat = newName.trim();
-      setCategories(prev => prev.includes(cat) ? prev : [...prev, cat]);
-      onChange(cat);
-      setNewName('');
-      setIsAdding(false);
-    }
-  };
-
-  return (
-    <div className="space-y-1 w-full">
-      <div className="flex justify-between items-center px-1">
-        <label className="text-[10px] uppercase font-bold text-earth flex items-center gap-2">
-          {label || 'Category'}
-          {isSuggested && (
-            <span className="text-[8px] bg-sage/10 text-sage px-1.5 py-0.5 rounded-full border border-sage/20 animate-pulse">Suggested</span>
-          )}
-        </label>
-        <button 
-          type="button"
-          onClick={() => setIsAdding(!isAdding)}
-          className="text-[10px] font-bold text-sage hover:underline"
-        >
-          {isAdding ? 'Cancel' : '+ Custom'}
-        </button>
-      </div>
-      
-      {isAdding ? (
-        <div className="flex gap-2">
-          <input 
-            autoFocus
-            placeholder="New Category"
-            className="flex-1 bg-white border border-stone rounded-xl p-3 text-sm outline-none shadow-sm focus:ring-2 focus:ring-sage/20"
-            value={newName}
-            onChange={e => setNewName(e.target.value)}
-            onKeyDown={e => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                handleAdd();
-              }
-            }}
-          />
-          <button 
-            type="button"
-            onClick={handleAdd}
-            className="bg-sage text-white px-3 rounded-xl hover:bg-emerald-900 transition-colors shadow-sm"
-          >
-            <Plus size={16} />
-          </button>
-        </div>
-      ) : (
-        <select 
-          className="w-full bg-cream border border-stone rounded-xl p-3 text-sm outline-none shadow-sm cursor-pointer hover:border-sage/50 transition-colors"
-          value={value}
-          onChange={e => onChange(e.target.value)}
-        >
-          {categories.map(cat => (
-            <option key={cat}>{cat}</option>
-          ))}
-        </select>
-      )}
-    </div>
-  );
-}
 
 function GSTCalculator() {
   const [amount, setAmount] = useState<number | ''>('');
@@ -367,11 +267,10 @@ interface ReceiptItemEditorProps {
   onChange: (items: ReceiptItem[]) => void;
   onTotalChange?: (total: number) => void;
   categories: string[];
-  setCategories: React.Dispatch<React.SetStateAction<string[]>>;
   isGstRegistered: boolean;
 }
 
-function ReceiptItemEditor({ items, onChange, onTotalChange, categories, setCategories, isGstRegistered }: ReceiptItemEditorProps) {
+function ReceiptItemEditor({ items, onChange, onTotalChange, categories, isGstRegistered }: ReceiptItemEditorProps) {
   const addItem = () => {
     const newItem: ReceiptItem = { 
       id: Math.random().toString(36).substr(2, 5), 
@@ -433,15 +332,16 @@ function ReceiptItemEditor({ items, onChange, onTotalChange, categories, setCate
               />
             </div>
             <div className="flex items-center justify-between">
-              <div className="flex-1 max-w-[200px]">
-                <CategorySelector 
+              <div className="flex items-center gap-4">
+                <select 
+                  className="bg-white border border-stone rounded-lg px-2 py-1 text-[10px] outline-none"
                   value={item.category}
-                  onChange={val => updateItem(idx, { category: val })}
-                  categories={categories}
-                  setCategories={setCategories}
-                />
-              </div>
-              <div className="flex items-center gap-4 flex-1 justify-end">
+                  onChange={e => updateItem(idx, { category: e.target.value })}
+                >
+                  {categories.map(cat => (
+                    <option key={cat}>{cat}</option>
+                  ))}
+                </select>
                 {isGstRegistered && (
                   <div className="flex items-center gap-3">
                     <label className="flex items-center gap-2 cursor-pointer">
@@ -985,10 +885,17 @@ export default function App() {
     atoGuidance?: string;
   }
   const [findings, setFindings] = useState<RiskFinding[]>([]);
+  const [showExportDialog, setShowExportDialog] = useState(false);
+  const [exportOptions, setExportOptions] = useState({
+    expenses: true,
+    income: true,
+    logbook: true,
+    audit: true,
+    sbrReport: false
+  });
   const [isScanning, setIsScanning] = useState(false);
   const [tipIndex, setTipIndex] = useState(0);
   const [isSuggestingCategory, setIsSuggestingCategory] = useState(false);
-  const [wasCategorySuggested, setWasCategorySuggested] = useState(false);
   const [toast, setToast] = useState<{message: string; type: 'success' | 'error'} | null>(null);
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
@@ -1015,20 +922,20 @@ export default function App() {
       }
 
       // 2. Round numbers check
-      const roundNumbers = receipts.filter(r => r.total % 1 === 0 && r.total > 10);
-      if (roundNumbers.length > receipts.length * 0.3) {
+      const roundNumbers = categoryReceipts.filter(r => r.total % 1 === 0 && r.total > 10);
+      if (roundNumbers.length > categoryReceipts.length * 0.3) {
         newFindings.push({
           id: 'f2',
           level: 'medium',
           title: 'High Volume of Round Numbers',
-          description: `${roundNumbers.length} of your ${receipts.length} expenses have exactly $0.00 cents. The ATO flags frequent "rounded" claims as potential estimates rather than actual costs.`,
+          description: `${roundNumbers.length} of your ${categoryReceipts.length} expenses have exactly $0.00 cents. The ATO flags frequent "rounded" claims as potential estimates rather than actual costs.`,
           advice: 'Ensure you are recording the EXACT amount including cents from your bank statements or digital receipts.',
-          atoGuidance: 'https://www.ato.gov.au/business/record-keeping-for-business'
+          atoGuidance: 'https://www.ato.gov.au/business/record-keeping-for-business/record-keeping-rules-for-business'
         });
       }
 
       // 3. Asset Threshold check
-      const missedAssets = receipts.filter(r => !r.isAsset && r.total >= 300 && r.category !== 'Materials');
+      const missedAssets = categoryReceipts.filter(r => !r.isAsset && r.total >= 300 && r.category !== 'Materials');
       if (missedAssets.length > 0) {
         newFindings.push({
           id: 'f3',
@@ -1036,12 +943,12 @@ export default function App() {
           title: 'Depreciable Assets Misclassified',
           description: `You have ${missedAssets.length} items over $300 (e.g., tools or equipment) that are currently marked as immediate expenses.`,
           advice: 'Review your expenses and toggle the "Asset" switch for high-value tools.',
-          atoGuidance: 'https://www.ato.gov.au/business/depreciation-and-capital-expenses-and-allowances'
+          atoGuidance: 'https://www.ato.gov.au/business/depreciation-and-capital-expenses-and-allowances/tool-allowances-and-depreciation'
         });
       }
 
       // 4. Logbook Gap
-      const fuelReceipts = receipts.filter(r => r.category === 'Fuel');
+      const fuelReceipts = categoryReceipts.filter(r => r.category === 'Fuel');
       const totalKm = logEntries.reduce((s, e) => s + e.km, 0);
       if (fuelReceipts.length > 5 && totalKm < 100) {
          newFindings.push({
@@ -1055,7 +962,7 @@ export default function App() {
       }
 
       // 5. Expense Ratio
-      const totalExpenses = receipts.reduce((s, r) => s + r.total, 0);
+      const totalExpenses = categoryReceipts.reduce((s, r) => s + r.total, 0);
       if (turnover > 0 && totalExpenses / turnover > 0.7) {
         newFindings.push({
           id: 'f5',
@@ -1063,25 +970,26 @@ export default function App() {
           title: 'High Expense Ratio',
           description: `Your expenses represent ${(totalExpenses / turnover * 100).toFixed(0)}% of your turnover. This is significantly higher than ATO industry benchmarks.`,
           advice: 'Audit your expenses for non-business items.',
-          atoGuidance: 'https://www.ato.gov.au/business/small-business-benchmarks'
+          atoGuidance: 'https://www.ato.gov.au/business/small-business-benchmarks/industry-benchmarks'
         });
       }
 
       // 6. Bank Reconciliation Check
-      const manualCashEntries = receipts.filter(r => 
+      const manualCashEntries = categoryReceipts.filter(r => 
         r.vendor.toLowerCase().includes('cash') || 
         r.vendor.toLowerCase().includes('unknown') ||
-        !r.gstApplies
+        (isGstRegistered && !r.gstApplies) // Only flag lack of GST as a risk if the user is registered
       );
       
-      if (manualCashEntries.length > receipts.length * 0.2) {
+      const cashRiskRatio = manualCashEntries.length / Math.max(1, categoryReceipts.length);
+      if (cashRiskRatio > 0.2) {
         newFindings.push({
           id: 'f6',
           level: 'high',
           title: 'Unverifiable Bank Audit Risk',
           description: `${manualCashEntries.length} entries appear to be cash-based or lack standard bank markers. The ATO uses "Line-by-Line" data matching with Australian banks to verify claims.`,
-          advice: 'Switch to paying all business expenses via a dedicated business bank account. Unverifiable cash claims are often the first items disallowed during an audit.',
-          atoGuidance: 'https://www.ato.gov.au/business/record-keeping-for-business/matching-bank-statements'
+          advice: 'Switch to paying all business expenses via a dedicated business bank account. Unverifiable cash claims are often the first items disallowed during an audit. Aim for 100% digital matching.',
+          atoGuidance: 'https://www.ato.gov.au/business/record-keeping-for-business/record-keeping-rules-for-business/matching-bank-statements'
         });
       }
 
@@ -1173,7 +1081,14 @@ Certified by TradieTax AI Compliance Engine v2.0
   ]);
 
   // Turnover state for GST alert
-  const incomeFromEntries = incomeEntries.reduce((sum, inc) => sum + inc.amount, 0);
+  // Filtered income based on active category
+  const filteredIncomeEntries = incomeEntries.filter(inc => {
+    if (userCategory === 'Sole Trader') return inc.source !== 'PAYG';
+    if (userCategory === 'PAYG Employment') return inc.source === 'PAYG';
+    return true; // Personal Apportionment / Overall
+  });
+
+  const incomeFromEntries = filteredIncomeEntries.reduce((sum, inc) => sum + inc.amount, 0);
   const [manualTurnover, setManualTurnover] = useState(68000); 
   const turnover = incomeEntries.length > 0 ? incomeFromEntries : manualTurnover;
   const setTurnover = setManualTurnover; // Alias for backward compatibility if needed
@@ -1214,7 +1129,14 @@ Certified by TradieTax AI Compliance Engine v2.0
     const matchesSearch = r.vendor.toLowerCase().includes(searchTerm.toLowerCase()) || 
                          r.category.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesCategory = ledgerCategoryFilter === 'All' || r.category === ledgerCategoryFilter;
-    return matchesSearch && matchesCategory;
+    
+    // Filter by active User Category
+    let matchesUserType = true;
+    if (userCategory === 'Sole Trader') matchesUserType = r.type === 'Sole Trader';
+    else if (userCategory === 'PAYG Employment') matchesUserType = false; // User requested no expenses for PAYG
+    else if (userCategory === 'Personal Apportionment') matchesUserType = r.type === 'Personal Apportionment';
+
+    return matchesSearch && matchesCategory && matchesUserType;
   });
 
   const [newReceipt, setNewReceipt] = useState<Partial<ReceiptEntry>>({
@@ -1282,7 +1204,15 @@ Certified by TradieTax AI Compliance Engine v2.0
     }, 0);
   };
 
-  const totalGSTCredits = receipts
+  // Filtered receipts based on active category
+  const categoryReceipts = receipts.filter(r => {
+    if (userCategory === 'Sole Trader') return r.type === 'Sole Trader';
+    if (userCategory === 'PAYG Employment') return false; 
+    if (userCategory === 'Personal Apportionment') return r.type === 'Personal Apportionment';
+    return r.type === 'Sole Trader';
+  });
+
+  const totalGSTCredits = categoryReceipts
     .reduce((acc, r) => {
       const usage = r.type === 'Personal' ? 0 : (r.businessUsage ?? 100);
       return acc + (calculateGST(r) * (usage / 100));
@@ -1341,7 +1271,7 @@ Certified by TradieTax AI Compliance Engine v2.0
 
   const config = CATEGORY_CONFIG[userCategory];
 
-  const businessExpenses = receipts
+  const businessExpenses = categoryReceipts
     .reduce((acc, r) => {
       const usage = r.type === 'Personal' ? 0 : (r.businessUsage ?? 100);
       const netTotal = r.total - calculateGST(r);
@@ -1371,7 +1301,7 @@ Certified by TradieTax AI Compliance Engine v2.0
 
   const expensesByCategory = DEFAULT_CATEGORIES
     .map(cat => {
-      const total = receipts
+      const total = categoryReceipts
         .filter(r => r.category === cat)
         .reduce((sum, r) => {
           if (userCategory === 'Personal Apportionment') {
@@ -1484,55 +1414,132 @@ Certified by TradieTax AI Compliance Engine v2.0
     }
   };
 
-  const handleExport = async () => {
+  const handleExport = () => {
+    setShowExportDialog(true);
+  };
+
+  const executeExport = async () => {
     const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('Expenses');
+    setShowExportDialog(false);
+    showToast('Preparing your export package...');
 
-    worksheet.columns = [
-      { header: 'Financial Year', key: 'fy', width: 12 },
-      { header: 'Date', key: 'date', width: 12 },
-      { header: 'Vendor', key: 'vendor', width: 25 },
-      { header: 'Receipt Number', key: 'number', width: 15 },
-      { header: 'Source', key: 'source', width: 12 },
-      { header: 'Category', key: 'category', width: 20 },
-      { header: 'Total (AUD)', key: 'total', width: 15 },
-      { header: 'GST (AUD)', key: 'gst', width: 15 },
-      { header: 'Type', key: 'type', width: 15 },
-      { header: 'Internal Filename', key: 'filename', width: 40 },
-    ];
+    try {
+      // 1. Expenses Sheet (Filtered by active selection)
+      if (exportOptions.expenses) {
+        const expenseSheet = workbook.addWorksheet('Expenses');
+        expenseSheet.columns = [
+          { header: 'FY', key: 'fy', width: 8 },
+          { header: 'Date', key: 'date', width: 12 },
+          { header: 'Vendor', key: 'vendor', width: 25 },
+          { header: 'Category', key: 'category', width: 15 },
+          { header: 'Total (AUD)', key: 'total', width: 15 },
+          { header: 'GST (AUD)', key: 'gst', width: 15 },
+          { header: 'Business %', key: 'usage', width: 12 },
+          { header: 'Type', key: 'type', width: 15 },
+        ];
+        
+        const expenseData = categoryReceipts.map(r => ({
+          fy: getFinancialYear(r.date),
+          date: r.date,
+          vendor: r.vendor,
+          category: r.category,
+          total: r.total,
+          gst: calculateGST(r),
+          usage: r.type === 'Personal' ? 0 : (r.businessUsage ?? 100),
+          type: r.type
+        }));
+        expenseSheet.addRows(expenseData);
+        expenseSheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+        expenseSheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4A5D4E' } };
+      }
 
-    const data = receipts.map(r => ({
-      fy: getFinancialYear(r.date),
-      date: r.date,
-      vendor: r.vendor,
-      number: r.receiptNumber || 'N/A',
-      source: r.source || 'Business',
-      category: r.category,
-      total: r.total,
-      gst: calculateGST(r),
-      type: r.type,
-      filename: getReceiptFileName(r)
-    }));
+      // 2. Income Sheet
+      if (exportOptions.income) {
+        const incomeSheet = workbook.addWorksheet('Income');
+        incomeSheet.columns = [
+          { header: 'Date', key: 'date', width: 15 },
+          { header: 'Description', key: 'description', width: 30 },
+          { header: 'Amount (AUD)', key: 'amount', width: 20 },
+          { header: 'Source', key: 'source', width: 15 },
+          { header: 'Type', key: 'docType', width: 20 },
+        ];
+        
+        const incomeData = filteredIncomeEntries.map(inc => ({
+          date: inc.date,
+          description: inc.description,
+          amount: inc.amount,
+          source: inc.source,
+          docType: inc.documentType
+        }));
+        incomeSheet.addRows(incomeData);
+        incomeSheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+        incomeSheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4A5D4E' } };
+      }
 
-    worksheet.addRows(data);
+      // 3. Logbook Sheet
+      if (exportOptions.logbook && logEntries.length > 0) {
+        const logSheet = workbook.addWorksheet('Vehicle Logbook');
+        logSheet.columns = [
+          { header: 'Date', key: 'date', width: 15 },
+          { header: 'Distance (KM)', key: 'km', width: 15 },
+          { header: 'Purpose', key: 'purpose', width: 30 },
+          { header: 'Origin', key: 'origin', width: 20 },
+          { header: 'Destination', key: 'destination', width: 20 },
+        ];
+        logSheet.addRows(logEntries);
+        logSheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+        logSheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4A5D4E' } };
+      }
 
-    // Styling
-    worksheet.getRow(1).font = { bold: true };
-    worksheet.getRow(1).fill = {
-      type: 'pattern',
-      pattern: 'solid',
-      fgColor: { argb: 'FF4A5D4E' }
-    };
-    worksheet.getRow(1).font = { color: { argb: 'FFFFFFFF' }, bold: true };
+      // 4. Audit Findings
+      if (exportOptions.audit && findings.length > 0) {
+        const auditSheet = workbook.addWorksheet('Risk Audit');
+        auditSheet.columns = [
+          { header: 'Level', key: 'level', width: 10 },
+          { header: 'Alert', key: 'title', width: 30 },
+          { header: 'Description', key: 'description', width: 60 },
+          { header: 'Advice', key: 'advice', width: 60 },
+        ];
+        auditSheet.addRows(findings);
+        auditSheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+        auditSheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4A5D4E' } };
+      }
 
-    const buffer = await workbook.xlsx.writeBuffer();
-    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    const url = window.URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = `TradieTax_Expenses_FY26_SBR_Ready.xlsx`;
-    anchor.click();
-    window.URL.revokeObjectURL(url);
+      // 5. Performance / SBR
+      if (exportOptions.sbrReport) {
+        const summarySheet = workbook.addWorksheet('Business Summary');
+        summarySheet.columns = [
+          { header: 'Metric', key: 'metric', width: 35 },
+          { header: 'Value', key: 'value', width: 25 },
+        ];
+        
+        summarySheet.addRows([
+          { metric: 'Entity Name', value: userName },
+          { metric: 'Category', value: userCategory },
+          { metric: 'Financial Year', value: '2025-26' },
+          { metric: 'Total Income', value: turnover },
+          { metric: 'Total Expenses', value: businessExpenses },
+          { metric: 'GST Payable', value: (turnover * 0.1) },
+          { metric: 'GST Credits', value: totalGSTCredits },
+          { metric: 'Net Taxable (Est)', value: turnover - businessExpenses },
+        ]);
+        summarySheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+        summarySheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4A5D4E' } };
+      }
+
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = window.URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `TradieTax_Selected_Records_${new Date().toISOString().split('T')[0]}.xlsx`;
+      anchor.click();
+      window.URL.revokeObjectURL(url);
+      showToast('Export Package Ready');
+    } catch (err) {
+      console.error(err);
+      showToast('Export failed', 'error');
+    }
   };
 
   const handleExportLogbook = async () => {
@@ -2258,7 +2265,6 @@ Certified by TradieTax AI Compliance Engine v2.0
                                  for (const [key, cat] of Object.entries(VENDOR_CATEGORY_MAP)) {
                                    if (lowerVendor.includes(key)) {
                                      setNewReceipt(prev => ({ ...prev, category: cat }));
-                                     setWasCategorySuggested(true);
                                      matched = true;
                                      break;
                                    }
@@ -2268,7 +2274,6 @@ Certified by TradieTax AI Compliance Engine v2.0
                                    const suggested = await suggestCategory(newReceipt.vendor, categories);
                                    if (suggested) {
                                      setNewReceipt(prev => ({ ...prev, category: suggested }));
-                                     setWasCategorySuggested(true);
                                    }
                                    setIsSuggestingCategory(false);
                                  }
@@ -2283,13 +2288,11 @@ Certified by TradieTax AI Compliance Engine v2.0
                                for (const [key, cat] of Object.entries(VENDOR_CATEGORY_MAP)) {
                                  if (lowerVendor.includes(key)) {
                                    suggestedCategory = cat;
-                                   suggested = true;
                                    break;
                                  }
                                }
                                
                                setNewReceipt({...newReceipt, vendor, category: suggestedCategory});
-                               setWasCategorySuggested(suggested);
                              }}
                            />
                            {isSuggestingCategory && (
@@ -2348,18 +2351,65 @@ Certified by TradieTax AI Compliance Engine v2.0
                              }}
                            />
                          </div>
-                          <div className="col-span-1">
-                            <CategorySelector 
-                              label="Expense Category"
-                              value={newReceipt.category}
-                              onChange={val => {
-                                setNewReceipt({...newReceipt, category: val});
-                                setWasCategorySuggested(false);
-                              }}
-                              categories={categories}
-                              setCategories={setCategories}
-                              isSuggested={wasCategorySuggested}
-                            />
+                          <div className="space-y-1">
+                            <div className="flex justify-between items-center px-1">
+                              <label className="text-[10px] uppercase font-bold text-earth">Expense Category</label>
+                              <button 
+                                type="button"
+                                onClick={() => setIsAddingCategory(!isAddingCategory)}
+                                className="text-[10px] font-bold text-sage hover:underline"
+                              >
+                                {isAddingCategory ? 'Cancel' : '+ Custom'}
+                              </button>
+                            </div>
+                            
+                            {isAddingCategory ? (
+                              <div className="flex gap-2">
+                                <input 
+                                  placeholder="New Category"
+                                  className="flex-1 bg-white border border-stone rounded-xl p-3 text-sm outline-none"
+                                  value={newCategoryName}
+                                  onChange={e => setNewCategoryName(e.target.value)}
+                                  onKeyDown={e => {
+                                    if (e.key === 'Enter') {
+                                      e.preventDefault();
+                                      if (newCategoryName.trim()) {
+                                        const cat = newCategoryName.trim();
+                                        setCategories(prev => prev.includes(cat) ? prev : [...prev, cat]);
+                                        setNewReceipt({...newReceipt, category: cat});
+                                        setNewCategoryName('');
+                                        setIsAddingCategory(false);
+                                      }
+                                    }
+                                  }}
+                                />
+                                <button 
+                                  type="button"
+                                  onClick={() => {
+                                    if (newCategoryName.trim()) {
+                                      const cat = newCategoryName.trim();
+                                      setCategories(prev => prev.includes(cat) ? prev : [...prev, cat]);
+                                      setNewReceipt({...newReceipt, category: cat});
+                                      setNewCategoryName('');
+                                      setIsAddingCategory(false);
+                                    }
+                                  }}
+                                  className="bg-sage text-white px-3 rounded-xl hover:bg-emerald-900 transition-colors"
+                                >
+                                  <Plus size={16} />
+                                </button>
+                              </div>
+                            ) : (
+                              <select 
+                                className="w-full bg-cream border border-stone rounded-xl p-3 text-sm outline-none"
+                                value={newReceipt.category}
+                                onChange={e => setNewReceipt({...newReceipt, category: e.target.value})}
+                              >
+                                {categories.map(cat => (
+                                  <option key={cat}>{cat}</option>
+                                ))}
+                              </select>
+                            )}
                           </div>
                          <div className="space-y-1">
                            <label className="text-[10px] uppercase font-bold text-earth px-1">Tax Type</label>
@@ -2419,7 +2469,6 @@ Certified by TradieTax AI Compliance Engine v2.0
                              items={newReceipt.items || []}
                              onChange={(items) => setNewReceipt({ ...newReceipt, items })}
                              categories={categories}
-                             setCategories={setCategories}
                              isGstRegistered={isGstRegistered}
                              onTotalChange={(total) => setNewReceipt({ 
                                ...newReceipt, 
@@ -3009,9 +3058,9 @@ Certified by TradieTax AI Compliance Engine v2.0
                        href="https://www.ato.gov.au/individuals-and-families/income-deductions-offsets-and-rebates/deductions-you-can-claim/occupation-and-industry-specific-guides/tradies-and-construction-workers-income-and-deductions" 
                        target="_blank" 
                        rel="noopener noreferrer"
-                       className="inline-flex items-center gap-1.5 text-[10px] font-bold text-sage mt-2 hover:bg-sand p-1 px-2 rounded-lg transition-colors border border-sand shadow-sm"
+                       className="inline-flex items-center gap-2 text-xs font-bold text-sage mt-4 hover:bg-sand p-2 px-4 rounded-xl transition-colors border border-sand shadow-sm bg-white"
                      >
-                        Official ATO Tradie Tax Guide <ExternalLink size={10} />
+                        Official ATO Tradie Tax Guide <ExternalLink size={14} />
                      </a>
                    </div>
                    <button 
@@ -3129,14 +3178,14 @@ Certified by TradieTax AI Compliance Engine v2.0
                                 finding.level === 'high' ? "text-red-700" : "text-amber-700"
                               )}>{finding.description}</p>
                               
-                              {finding.atoGuidance && (
+                               {finding.atoGuidance && (
                                 <a 
                                   href={finding.atoGuidance} 
                                   target="_blank" 
                                   rel="noopener noreferrer"
-                                  className="mt-2 inline-flex items-center gap-1 text-[10px] font-bold text-sage underline underline-offset-4 hover:text-emerald-900"
+                                  className="mt-3 inline-flex items-center gap-1.5 text-xs font-bold text-sage underline underline-offset-4 hover:text-emerald-900 bg-sand/30 p-1.5 px-3 rounded-lg border border-sand transition-all hover:bg-sand"
                                 >
-                                  View ATO Guidelines <ExternalLink size={10} />
+                                  View ATO Guidelines <ExternalLink size={12} />
                                 </a>
                               )}
                               {finding.advice && (
@@ -3505,13 +3554,13 @@ Certified by TradieTax AI Compliance Engine v2.0
                       <span className="text-right">Gross Income</span>
                     </div>
                     <div className="divide-y divide-sand">
-                      {incomeEntries.length === 0 ? (
+                      {filteredIncomeEntries.length === 0 ? (
                         <div className="p-20 text-center">
                           <Banknote size={48} className="mx-auto text-earth/10 mb-4" />
-                          <p className="text-earth/40 italic font-serif text-sm">No income records found.</p>
+                          <p className="text-earth/40 italic font-serif text-sm">No income records found for {userCategory}.</p>
                         </div>
                       ) : (
-                        incomeEntries.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map(inc => (
+                        filteredIncomeEntries.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map(inc => (
                           <div key={inc.id} className="p-4 flex justify-between items-center text-sm hover:bg-cream transition-colors group">
                             <div className="w-1/3 flex items-center gap-2">
                               <button 
@@ -3830,6 +3879,17 @@ Certified by TradieTax AI Compliance Engine v2.0
         )}
       </AnimatePresence>
 
+      <AnimatePresence>
+        {showExportDialog && (
+          <ExportModal 
+            onClose={() => setShowExportDialog(false)}
+            onExport={executeExport}
+            options={exportOptions}
+            setOptions={setExportOptions}
+          />
+        )}
+      </AnimatePresence>
+
       {/* Mobile NavBar */}
       <nav className="md:hidden fixed bottom-6 left-1/2 -translate-x-1/2 w-[90%] max-w-sm bg-sage text-white rounded-3xl p-2 flex items-center justify-around shadow-2xl z-50 border border-white/10">
         <MobButton active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} icon={<LayoutDashboard size={20} />} />
@@ -3919,6 +3979,96 @@ function LogEntryRow({ entry, isEditing, onEdit, onSave, onCancel }: { entry: Lo
         </button>
       </div>
     </div>
+  );
+}
+
+function ExportModal({ onClose, onExport, options, setOptions }: { onClose: () => void, onExport: () => void, options: any, setOptions: any }) {
+  const toggle = (key: string) => {
+    setOptions((prev: any) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-md z-[100] flex items-center justify-center p-4">
+      <motion.div 
+        initial={{ opacity: 0, y: 50 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: 50 }}
+        className="bg-white w-full max-w-sm rounded-[2.5rem] shadow-2xl overflow-hidden"
+      >
+        <div className="bg-sand p-8 text-sage">
+          <div className="flex justify-between items-center">
+            <div className="flex items-center gap-3">
+              <div className="bg-sage text-white p-2 rounded-xl">
+                <FileDown size={20} />
+              </div>
+              <h3 className="font-serif italic text-2xl">Export Data</h3>
+            </div>
+            <button onClick={onClose} className="p-2 hover:bg-sage/10 rounded-full transition-colors text-sage">
+              <Plus className="rotate-45" size={24} />
+            </button>
+          </div>
+          <p className="text-sage/60 text-xs mt-2 uppercase tracking-widest font-bold">Select data packages for export</p>
+        </div>
+
+        <div className="p-8 space-y-4 bg-cream">
+          <ExportOption 
+            label="Expenses & Receipts" 
+            desc="Detailed ledger with GST breakdown" 
+            checked={options.expenses} 
+            onChange={() => toggle('expenses')}
+          />
+          <ExportOption 
+            label="Income Records" 
+            desc="All revenue and payment sources" 
+            checked={options.income} 
+            onChange={() => toggle('income')}
+          />
+          <ExportOption 
+            label="Vehicle Logbook" 
+            desc="KM logs for business travel" 
+            checked={options.logbook} 
+            onChange={() => toggle('logbook')}
+          />
+          <ExportOption 
+            label="Risk Audit Report" 
+            desc="ATO alignment findings & advice" 
+            checked={options.audit} 
+            onChange={() => toggle('audit')}
+          />
+          <ExportOption 
+            label="Performance Summary" 
+            desc="Net position & performance ratios" 
+            checked={options.sbrReport} 
+            onChange={() => toggle('sbrReport')}
+          />
+
+          <button 
+            type="button"
+            onClick={onExport}
+            className="w-full bg-sage text-white py-4 rounded-2xl font-bold hover:bg-emerald-900 transition-all shadow-md mt-6 flex items-center justify-center gap-2"
+          >
+            Generate Excel Package <ChevronRight size={16} />
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+function ExportOption({ label, desc, checked, onChange }: { label: string, desc: string, checked: boolean, onChange: () => void }) {
+  return (
+    <label className="flex items-center gap-4 p-4 bg-white rounded-2xl border border-stone/50 cursor-pointer hover:border-sage transition-all group font-sans">
+      <div className="flex-1">
+        <p className="text-sm font-bold text-sage">{label}</p>
+        <p className="text-[10px] text-earth/60 italic">{desc}</p>
+      </div>
+      <input 
+        type="checkbox" 
+        checked={checked} 
+        onChange={onChange}
+        className="w-5 h-5 accent-sage"
+      />
+    </label>
   );
 }
 
@@ -4180,15 +4330,6 @@ function ReceiptRow({ receipt, onUpdate, onClick, categories, isGstRegistered }:
                 <option>Personal</option>
               </select>
             </div>
-            <div className="space-y-1">
-              <CategorySelector 
-                label="Category"
-                value={receipt.category}
-                onChange={val => onUpdate({ ...receipt, category: val })}
-                categories={categories}
-                setCategories={setCategories}
-              />
-            </div>
             {receipt.type === 'Personal Apportionment' && (
               <div className="space-y-2">
                 <div className="flex justify-between items-center text-[10px] uppercase font-bold text-earth">
@@ -4249,7 +4390,6 @@ function ReceiptRow({ receipt, onUpdate, onClick, categories, isGstRegistered }:
               <ReceiptItemEditor 
                 items={receipt.items || []} 
                 categories={categories}
-                setCategories={setCategories}
                 isGstRegistered={isGstRegistered}
                 onChange={(items) => {
                   const newTotal = items.reduce((s,i) => s + i.price, 0);
