@@ -1,6 +1,17 @@
 import { GoogleGenAI, Type } from "@google/genai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+let genAI: GoogleGenAI | null = null;
+
+function getAI() {
+  if (!genAI) {
+    const apiKey = process.env.GEMINI_API_KEY || (typeof window !== 'undefined' ? (window as any).process?.env?.GEMINI_API_KEY : undefined);
+    if (!apiKey || apiKey === "undefined") {
+      throw new Error("GEMINI_API_KEY is not defined. Please set it in your environment variables.");
+    }
+    genAI = new GoogleGenAI(apiKey);
+  }
+  return genAI;
+}
 
 export interface ReceiptData {
   vendor: string;
@@ -46,6 +57,7 @@ const receiptSchema = {
 
 export async function analyzeReceipt(base64Image: string): Promise<ReceiptData | null> {
   try {
+    const ai = getAI();
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: [
@@ -79,6 +91,7 @@ export async function analyzeReceipt(base64Image: string): Promise<ReceiptData |
 
 export async function suggestCategory(vendor: string, categories: string[]): Promise<string | null> {
   try {
+    const ai = getAI();
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: [
@@ -106,6 +119,7 @@ export async function suggestCategory(vendor: string, categories: string[]): Pro
 
 export async function chatWithTradie(messages: Array<{ role: 'user' | 'assistant', content: string }>, context: string): Promise<string> {
   try {
+    const ai = getAI();
     const history = messages.slice(0, -1).map(m => ({
       role: m.role === 'assistant' ? 'model' : 'user',
       parts: [{ text: m.content }]
