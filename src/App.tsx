@@ -59,7 +59,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
 import ExcelJS from 'exceljs';
 import Papa from 'papaparse';
-import { chatWithTradie, suggestCategory, analyzeReceipt } from './services/geminiService';
+import { chatWithTradie, suggestCategory, analyzeDocument, type DocumentAnalysis } from './services/geminiService';
 
 const TooltipIcon = ({ text }: { text: string }) => (
   <span className="group relative inline-block ml-1 align-middle">
@@ -73,7 +73,7 @@ const TooltipIcon = ({ text }: { text: string }) => (
 
 // Types
 type Tab = 'dashboard' | 'receipts' | 'income' | 'logbook' | 'tax' | 'chat' | 'assets' | 'audit';
-type UserCategory = 'Sole Trader' | 'PAYG Employment' | 'Personal Apportionment';
+type UserCategory = 'Sole Trader' | 'Payroll Employment' | 'Personal Apportionment';
 
 interface LogEntry {
   id: string;
@@ -105,7 +105,7 @@ interface ReceiptEntry {
   total: number;
   type: string;
   receiptNumber?: string;
-  source: 'Business' | 'PAYG';
+  source: 'Business' | 'Payroll';
   businessUsage?: number; // Percentage (0-100)
   items?: ReceiptItem[];
   isAsset?: boolean;
@@ -119,10 +119,12 @@ interface ReceiptEntry {
 interface IncomeEntry {
   id: string;
   amount: number;
+  grossAmount?: number;
+  taxWithheld?: number;
   date: string;
-  source: 'Sales' | 'PAYG' | 'Interest' | 'Other';
+  source: 'Income' | 'Payroll' | 'Interest' | 'Other';
   description: string;
-  documentType: 'Payment Slip' | 'Bank Statement' | 'Sales Receipt';
+  documentType: 'Payment Slip' | 'Bank Statement' | 'Income Receipt';
 }
 
 type UploadFrequency = 'Weekly' | 'Fortnightly' | 'Monthly' | 'Quarterly';
@@ -147,12 +149,19 @@ const getReceiptFileName = (receipt: ReceiptEntry) => {
 const DEFAULT_CATEGORIES = [
   'Materials',
   'Tools & Equipment',
-  'Fuel & Oil',
-  'Vehicle Maintenance',
+  'Fuel & Transport',
+  'Repairs & Maintenance',
   'Insurance',
   'Subcontractors',
+  'Professional Fees',
   'Office & Admin',
+  'Uniforms & PPE',
+  'Travel',
   'Marketing',
+  'Interest',
+  'Sales',
+  'Services',
+  'Wages',
   'Personal',
   'Other'
 ];
@@ -163,23 +172,69 @@ const VENDOR_CATEGORY_MAP: { [key: string]: string } = {
   'tradelink': 'Materials',
   'l&h': 'Materials',
   'middy': 'Materials',
-  'shell': 'Fuel & Oil',
-  'bp': 'Fuel & Oil',
-  'caltex': 'Fuel & Oil',
-  'ampol': 'Fuel & Oil',
-  '7-eleven': 'Fuel & Oil',
-  'united': 'Fuel & Oil',
+  'shell': 'Fuel & Transport',
+  'bp': 'Fuel & Transport',
+  'caltex': 'Fuel & Transport',
+  'ampol': 'Fuel & Transport',
+  '7-eleven': 'Fuel & Transport',
+  'united': 'Fuel & Transport',
   'officeworks': 'Office & Admin',
   'jb hi-fi': 'Office & Admin',
   'apple': 'Office & Admin',
   'post': 'Office & Admin',
-  'repco': 'Vehicle Maintenance',
-  'supercheap': 'Vehicle Maintenance',
+  'repco': 'Repairs & Maintenance',
+  'supercheap': 'Repairs & Maintenance',
   'nrma': 'Insurance',
   'racv': 'Insurance',
   'facebook': 'Marketing',
   'google': 'Marketing',
   'vistaprint': 'Marketing',
+  'allianz': 'Insurance',
+  'gio': 'Insurance',
+  'aussie broadband': 'Office & Admin',
+  'telstra': 'Office & Admin',
+  'optus': 'Office & Admin'
+};
+
+const compressImage = (file: File): Promise<{ base64: string, mimeType: string }> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+        const MAX_DIM = 2048;
+        if (width > height) {
+          if (width > MAX_DIM) {
+            height *= MAX_DIM / width;
+            width = MAX_DIM;
+          }
+        } else {
+          if (height > MAX_DIM) {
+            width *= MAX_DIM / height;
+            height = MAX_DIM;
+          }
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+          const base64 = dataUrl.split(',')[1];
+          resolve({ base64, mimeType: 'image/jpeg' });
+        } else {
+          reject(new Error('Canvas context not available'));
+        }
+      };
+      img.onerror = () => reject(new Error('Failed to load image for processing.'));
+      img.src = event.target?.result as string;
+    };
+    reader.onerror = () => reject(new Error('Failed to read file from device.'));
+    reader.readAsDataURL(file);
+  });
 };
 
 function GSTCalculator() {
@@ -795,27 +850,6 @@ function ProfileModal({
               </div>
 
               <div className="space-y-4 pt-4 border-t border-sand">
-                <div className="space-y-2">
-                  <label className="text-[10px] uppercase font-bold text-earth px-1">User Categorisation</label>
-                  <div className="grid grid-cols-1 gap-2">
-                    {(['Sole Trader', 'PAYG Employment', 'Personal Apportionment'] as UserCategory[]).map((cat) => (
-                      <button
-                        key={cat}
-                        onClick={() => setUserCategory(cat)}
-                        className={cn(
-                          "flex items-center justify-between p-3 rounded-xl border text-sm transition-all",
-                          userCategory === cat 
-                            ? "bg-sage/10 border-sage text-sage font-bold" 
-                            : "bg-white border-stone text-earth hover:border-sand"
-                        )}
-                      >
-                        <span>{cat}</span>
-                        {userCategory === cat && <Check size={16} />}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
                 <label className="flex items-center justify-between p-4 bg-white rounded-2xl border border-stone cursor-pointer hover:border-sage/30 transition-all">
                   <div className="flex flex-col">
                     <span className="text-sm font-bold text-sage">GST Registered</span>
@@ -894,11 +928,13 @@ export default function App() {
     sbrReport: false
   });
   const [isScanning, setIsScanning] = useState(false);
+  const [showScanWarning, setShowScanWarning] = useState(false);
+  const [pendingScanData, setPendingScanData] = useState<DocumentAnalysis | null>(null);
   const [tipIndex, setTipIndex] = useState(0);
   const [isSuggestingCategory, setIsSuggestingCategory] = useState(false);
-  const [toast, setToast] = useState<{message: string; type: 'success' | 'error'} | null>(null);
+  const [toast, setToast] = useState<{message: string; type: 'success' | 'error' | 'info'} | null>(null);
 
-  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3000);
   };
@@ -1071,27 +1107,28 @@ Certified by TradieTax AI Compliance Engine v2.0
       ]
     },
     { id: '2', vendor: "Shell Coles Express", category: "Fuel", date: "2026-04-23", total: 85.20, type: "Sole Trader", source: 'Business', receiptNumber: 'INV-442', items: [{ id: 'i3', name: 'Diesel', price: 85.20, category: 'Fuel', gstApplies: true }] },
-    { id: '3', vendor: "Aussie Broadband", category: "Office", date: "2026-04-22", total: 99.00, type: "Personal Apportionment", source: 'PAYG', receiptNumber: 'ABB-9921', businessUsage: 70, items: [{ id: 'i4', name: 'Internet Plan', price: 99.00, category: 'Office', gstApplies: true }] },
-    { id: '4', vendor: "Target Australia", category: "Personal", date: "2026-04-21", total: 45.00, type: "Personal", source: 'PAYG', receiptNumber: 'TGT-882', items: [{ id: 'i5', name: 'T-Shirt', price: 45.00, category: 'Personal', gstApplies: true }] },
+    { id: '3', vendor: "Aussie Broadband", category: "Office", date: "2026-04-22", total: 99.00, type: "Personal Apportionment", source: 'Payroll', receiptNumber: 'ABB-9921', businessUsage: 70, items: [{ id: 'i4', name: 'Internet Plan', price: 99.00, category: 'Office', gstApplies: true }] },
+    { id: '4', vendor: "Target Australia", category: "Personal", date: "2026-04-21", total: 45.00, type: "Personal", source: 'Payroll', receiptNumber: 'TGT-882', items: [{ id: 'i5', name: 'T-Shirt', price: 45.00, category: 'Personal', gstApplies: true }] },
   ]);
 
   const [incomeEntries, setIncomeEntries] = useState<IncomeEntry[]>([
-    { id: 'inc1', amount: 4500, date: '2026-04-15', source: 'Sales', description: 'Renovation Phase 1', documentType: 'Bank Statement' },
-    { id: 'inc2', amount: 1200, date: '2026-04-20', source: 'PAYG', description: 'Weekly Wages Sub-contract', documentType: 'Payment Slip' }
+    { id: 'inc1', amount: 4500, date: '2026-04-15', source: 'Income', description: 'Renovation Phase 1', documentType: 'Bank Statement' },
+    { id: 'inc2', amount: 1200, date: '2026-04-20', source: 'Payroll', description: 'Weekly Wages Sub-contract', documentType: 'Payment Slip' }
   ]);
 
   // Turnover state for GST alert
   // Filtered income based on active category
-  const filteredIncomeEntries = incomeEntries.filter(inc => {
-    if (userCategory === 'Sole Trader') return inc.source !== 'PAYG';
-    if (userCategory === 'PAYG Employment') return inc.source === 'PAYG';
-    return true; // Personal Apportionment / Overall
-  });
+  const filteredIncomeEntries = incomeEntries;
+  const businessIncome = filteredIncomeEntries
+    .filter(inc => inc.source !== 'Payroll')
+    .reduce((sum, inc) => sum + (inc.grossAmount || inc.amount), 0);
+  const paygIncome = filteredIncomeEntries
+    .filter(inc => inc.source === 'Payroll')
+    .reduce((sum, inc) => sum + (inc.grossAmount || inc.amount), 0);
 
-  const incomeFromEntries = filteredIncomeEntries.reduce((sum, inc) => sum + inc.amount, 0);
-  const [manualTurnover, setManualTurnover] = useState(68000); 
-  const turnover = incomeEntries.length > 0 ? incomeFromEntries : manualTurnover;
-  const setTurnover = setManualTurnover; // Alias for backward compatibility if needed
+  const incomeFromEntries = businessIncome + paygIncome;
+  const totalTaxWithheld = filteredIncomeEntries.reduce((sum, inc) => sum + (inc.taxWithheld || 0), 0);
+  const turnover = incomeFromEntries; 
   const GST_THRESHOLD = 75000;
 
   const [uploadFrequency, setUploadFrequency] = useState<UploadFrequency>('Monthly');
@@ -1116,7 +1153,7 @@ Certified by TradieTax AI Compliance Engine v2.0
   const [newIncome, setNewIncome] = useState<Partial<IncomeEntry>>({
     amount: 0,
     date: new Date().toISOString().split('T')[0],
-    source: 'Sales',
+    source: 'Income',
     description: '',
     documentType: 'Bank Statement'
   });
@@ -1130,11 +1167,8 @@ Certified by TradieTax AI Compliance Engine v2.0
                          r.category.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesCategory = ledgerCategoryFilter === 'All' || r.category === ledgerCategoryFilter;
     
-    // Filter by active User Category
-    let matchesUserType = true;
-    if (userCategory === 'Sole Trader') matchesUserType = r.type === 'Sole Trader';
-    else if (userCategory === 'PAYG Employment') matchesUserType = false; // User requested no expenses for PAYG
-    else if (userCategory === 'Personal Apportionment') matchesUserType = r.type === 'Personal Apportionment';
+    // Show all business relevant receipts in ledger
+    const matchesUserType = r.type !== 'Personal';
 
     return matchesSearch && matchesCategory && matchesUserType;
   });
@@ -1161,10 +1195,10 @@ Certified by TradieTax AI Compliance Engine v2.0
       category: newReceipt.category!,
       date: newReceipt.date!,
       total: Number(newReceipt.total),
-      type: newReceipt.type!,
+      type: 'Sole Trader',
       source: newReceipt.source as any || 'Business',
       receiptNumber: newReceipt.receiptNumber || '',
-      businessUsage: newReceipt.type === 'Personal Apportionment' ? newReceipt.businessUsage : (newReceipt.type === 'Personal' ? 0 : 100),
+      businessUsage: newReceipt.businessUsage ?? 100,
       items: newReceipt.items || [],
       isAsset: (newReceipt.items || []).some(item => item.price >= 300) || Number(newReceipt.total) >= 300,
       gstApplies: newReceipt.gstApplies,
@@ -1207,7 +1241,7 @@ Certified by TradieTax AI Compliance Engine v2.0
   // Filtered receipts based on active category
   const categoryReceipts = receipts.filter(r => {
     if (userCategory === 'Sole Trader') return r.type === 'Sole Trader';
-    if (userCategory === 'PAYG Employment') return false; 
+    if (userCategory === 'Payroll Employment') return false; 
     if (userCategory === 'Personal Apportionment') return r.type === 'Personal Apportionment';
     return r.type === 'Sole Trader';
   });
@@ -1238,79 +1272,41 @@ Certified by TradieTax AI Compliance Engine v2.0
     return tax + medicareLevy;
   };
 
-  // Differentiate based on User Category
-  const CATEGORY_CONFIG = {
-    'Sole Trader': {
-      revenue: 'Gross Turnover',
-      expense: 'Business Expenses',
-      profit: 'Net Business Profit',
-      taxLabel: 'Est. Tax Liability',
-      description: 'Business income focus. Expenses are net of GST. Tax applies to profit.',
-      icon: <TrendingUp size={16} className="text-emerald-500" />,
-      color: 'sage'
-    },
-    'PAYG Employment': {
-      revenue: 'Gross Salary',
-      expense: 'Work Deductions',
-      profit: 'Taxable Income',
-      taxLabel: 'Est. Tax Bill (FY)',
-      description: 'Salary focus. Deductions reduce taxable income. GST usually N/A.',
-      icon: <FileText size={16} className="text-blue-500" />,
-      color: 'blue-600'
-    },
-    'Personal Apportionment': {
-      revenue: 'Total Income',
-      expense: 'Total Living Costs',
-      profit: 'Net Position (Cash)',
-      taxLabel: 'Income Tax Estimate',
-      description: 'Personal budgeting focus. Compares all income vs all spending.',
-      icon: <Search size={16} className="text-amber-500" />,
-      color: 'amber-600'
+  // Unified Financials (Combined Sole Trader + Payroll)
+  const getDeductibleAmount = (r: ReceiptEntry) => {
+    const netTotal = r.total - calculateGST(r);
+    const usage = (r.category === 'Personal' || r.type === 'Personal') ? 0 : (r.businessUsage ?? 100);
+    
+    let claimable = netTotal;
+    if (r.isAsset) {
+      const rate = r.depreciationRate || 20;
+      // Calculate depreciation for the current period (simplified as 1 year of depreciation)
+      claimable = netTotal * (rate / 100);
     }
+    
+    return claimable * (usage / 100);
   };
 
-  const config = CATEGORY_CONFIG[userCategory];
-
-  const businessExpenses = categoryReceipts
-    .reduce((acc, r) => {
-      const usage = r.type === 'Personal' ? 0 : (r.businessUsage ?? 100);
-      const netTotal = r.total - calculateGST(r);
-      return acc + (netTotal * (usage / 100));
-    }, 0); // Net of GST
+  const businessExpenses = receipts
+    .filter(r => r.type === 'Sole Trader' || r.type === 'Personal Apportionment')
+    .reduce((acc, r) => acc + getDeductibleAmount(r), 0); 
 
   const totalPersonalExpenses = receipts
-    .filter(r => r.category === 'Personal' || r.type === 'Personal')
+    .filter(r => r.type === 'Personal' || r.category === 'Personal')
     .reduce((sum, r) => sum + r.total, 0);
 
-  let taxableAmount = 0;
-  let netSavings = 0;
+  const taxableAmount = turnover - businessExpenses; // Combined taxable income
+  const netSavings = turnover - businessExpenses - totalPersonalExpenses;
 
-  if (userCategory === 'Sole Trader') {
-    taxableAmount = turnover - businessExpenses;
-    netSavings = taxableAmount; 
-  } else if (userCategory === 'PAYG Employment') {
-    taxableAmount = turnover - businessExpenses; 
-    netSavings = taxableAmount;
-  } else {
-    taxableAmount = turnover; 
-    netSavings = turnover - businessExpenses - totalPersonalExpenses;
-  }
-
-  const netProfit = userCategory === 'Personal Apportionment' ? netSavings : (turnover - businessExpenses);
-  const estimatedTax = calculateTax(taxableAmount);
+  const netProfit = taxableAmount;
+  const totalEstimatedTax = calculateTax(taxableAmount);
+  const estimatedTax = Math.max(0, totalEstimatedTax - totalTaxWithheld);
 
   const expensesByCategory = DEFAULT_CATEGORIES
     .map(cat => {
-      const total = categoryReceipts
-        .filter(r => r.category === cat)
-        .reduce((sum, r) => {
-          if (userCategory === 'Personal Apportionment') {
-             return sum + r.total;
-          }
-          const usage = (cat === 'Personal' && userCategory !== 'Personal Apportionment') ? 0 : (r.businessUsage ?? 100);
-          const netTotal = r.total - calculateGST(r);
-          return sum + (netTotal * (usage / 100));
-        }, 0);
+      const total = receipts
+        .filter(r => r.category === cat && r.type !== 'Personal')
+        .reduce((sum, r) => sum + getDeductibleAmount(r), 0);
       return { name: cat, value: Number(total.toFixed(2)) };
     })
     .filter(d => d.value > 0)
@@ -1364,53 +1360,73 @@ Certified by TradieTax AI Compliance Engine v2.0
     setIsScanning(true);
     
     try {
-      // Convert file to base64
-      const reader = new FileReader();
-      const base64Promise = new Promise<string>((resolve) => {
-        reader.onload = () => {
-          const base64 = (reader.result as string).split(',')[1];
-          resolve(base64);
-        };
-      });
-      reader.readAsDataURL(file);
-      const base64 = await base64Promise;
-
-      const data = await analyzeReceipt(base64);
+      showToast('Processing image...', 'info');
+      const { base64, mimeType } = await compressImage(file);
+      
+      showToast('Analyzing with AI...', 'info');
+      const data = await analyzeDocument(base64, mimeType);
       
       if (data) {
-        const receipt: ReceiptEntry = {
-          id: Math.random().toString(36).substr(2, 9),
-          vendor: data.vendor || "Unknown Vendor",
-          category: data.category || "Other",
-          date: data.date || new Date().toISOString().split('T')[0],
-          total: data.total || 0,
-          type: userCategory,
-          source: 'Business',
-          receiptNumber: '',
-          businessUsage: userCategory === 'Personal Apportionment' ? 50 : 100,
-          items: (data.items || []).map(item => ({
-            id: Math.random().toString(36).substr(2, 5),
-            name: item.name,
-            price: item.price,
-            category: item.category || data.category || 'Other',
-            gstApplies: true
-          })),
-          isAsset: data.isAsset || data.total >= 300,
-          gstApplies: true,
-          depreciationRate: data.depreciationRate || 20,
-          purchaseYear: data.purchaseYear || new Date().getFullYear(),
-        };
-        
-        setReceipts(prev => [receipt, ...prev]);
-        showToast('Receipt scanned and analyzed successfully!');
+        if (data.confidence === 'low') {
+          setPendingScanData(data);
+          setShowScanWarning(true);
+        } else {
+          processScanData(data);
+        }
       } else {
-        showToast('Could not analyze receipt. Please entry manually.', 'error');
+        showToast('AI could not read receipt clearly. Try better lighting.', 'error');
       }
     } catch (error) {
       console.error("Scan error:", error);
-      showToast('Error scanning receipt.', 'error');
+      const msg = error instanceof Error ? error.message : 'Error scanning document.';
+      showToast(msg, 'error');
     } finally {
       setIsScanning(false);
+      // Reset input so same file can be scanned again if needed
+      e.target.value = '';
+    }
+  };
+
+  const processScanData = (data: DocumentAnalysis) => {
+    if (data.documentType === 'Expense') {
+      const receipt: ReceiptEntry = {
+        id: Math.random().toString(36).substr(2, 9),
+        vendor: data.vendor || "Unknown Vendor",
+        category: data.category || "Other",
+        date: data.date || new Date().toISOString().split('T')[0],
+        total: data.total || 0,
+        type: 'Sole Trader',
+        source: 'Business',
+        receiptNumber: '',
+        businessUsage: 100,
+        items: (data.items || []).map(item => ({
+          id: Math.random().toString(36).substr(2, 5),
+          name: item.name,
+          price: item.price,
+          category: item.category || data.category || 'Other',
+          gstApplies: true
+        })),
+        isAsset: data.isAsset || data.total >= 300,
+        gstApplies: true,
+        depreciationRate: 20,
+        purchaseYear: new Date().getFullYear(),
+      };
+      
+      setReceipts(prev => [receipt, ...prev]);
+      showToast('Receipt scanned and analyzed successfully!');
+    } else if (data.documentType === 'Income' || data.documentType === 'Payroll') {
+      const income: IncomeEntry = {
+        id: Math.random().toString(36).substr(2, 9),
+        amount: data.total,
+        grossAmount: data.grossAmount,
+        taxWithheld: data.taxWithheld,
+        date: data.date || new Date().toISOString().split('T')[0],
+        source: data.documentType === 'Payroll' ? 'Payroll' : 'Income',
+        description: data.vendor + (data.documentType === 'Payroll' ? ' Pay Slip' : ' Invoice'),
+        documentType: data.documentType === 'Payroll' ? 'Payment Slip' : 'Income Receipt'
+      };
+      setIncomeEntries(prev => [income, ...prev]);
+      showToast(`${data.documentType} scanned and added to Income!`);
     }
   };
 
@@ -1607,12 +1623,12 @@ Certified by TradieTax AI Compliance Engine v2.0
       Total KM logged this year: ${totalKm}km. 
       Latest trip: ${recentTrip}.
       Financials (FY 2026/27):
-      - ${config.revenue} (Income): $${turnover.toLocaleString()}
-      - ${config.expense} (Net of GST): $${businessExpenses.toFixed(2)}
-      - ${config.profit}: $${netProfit.toFixed(2)}
+      - Gross Income (Income): $${turnover.toLocaleString()}
+      - Business Expenses (Net of GST): $${businessExpenses.toFixed(2)}
+      - Taxable Net Profit: $${netProfit.toFixed(2)}
       - Estimated Tax Liability (incl. Medicare Levy): $${estimatedTax.toFixed(2)}
       - GST Financials:
-        * Total GST Collected (on Sales): $${gstCollected.toFixed(2)}
+        * Total GST Collected (on Income): $${gstCollected.toFixed(2)}
         * Total GST Credits (on Expenses): $${totalGSTCredits.toFixed(2)}
         * Net GST Position: ${netGstPosition >= 0 ? 'Payable' : 'Refundable'} $${Math.abs(netGstPosition).toFixed(2)}
       - Assets & Depreciation:
@@ -1646,7 +1662,7 @@ Certified by TradieTax AI Compliance Engine v2.0
               ...entry,
               amount: Number(newIncome.amount),
               date: newIncome.date!,
-              source: newIncome.source as any || 'Sales',
+              source: newIncome.source as any || 'Income',
               description: newIncome.description || '',
               documentType: (newIncome.documentType as any) || 'Bank Statement'
             }
@@ -1658,7 +1674,7 @@ Certified by TradieTax AI Compliance Engine v2.0
         id: Math.random().toString(36).substr(2, 9),
         amount: Number(newIncome.amount),
         date: newIncome.date!,
-        source: newIncome.source as any || 'Sales',
+        source: newIncome.source as any || 'Income',
         description: newIncome.description || '',
         documentType: (newIncome.documentType as any) || 'Bank Statement'
       };
@@ -1672,7 +1688,7 @@ Certified by TradieTax AI Compliance Engine v2.0
     setNewIncome({
       amount: 0,
       date: new Date().toISOString().split('T')[0],
-      source: 'Sales',
+      source: 'Income',
       description: '',
       documentType: 'Bank Statement'
     });
@@ -1823,20 +1839,22 @@ Certified by TradieTax AI Compliance Engine v2.0
             <p className="text-sm text-gray-500">Here's your tax snapshot at a glance.</p>
           </div>
 
-          <div className="flex bg-sand p-1 rounded-xl text-xs font-medium">
-            {(['Sole Trader', 'PAYG Employment', 'Personal Apportionment'] as UserCategory[]).map((cat) => (
-              <button 
-                key={cat}
-                onClick={() => setUserCategory(cat)}
-                className={cn(
-                  "px-4 py-1.5 rounded-lg transition-all",
-                  userCategory === cat ? "bg-sage text-white shadow-sm" : "text-earth hover:bg-white/50"
-                )}
-              >
-                {cat}
-              </button>
-            ))}
-          </div>
+          {activeTab !== 'tax' && (
+            <div className="flex bg-sand p-1 rounded-xl text-xs font-medium">
+              {(['Sole Trader', 'Payroll Employment', 'Personal Apportionment'] as UserCategory[]).map((cat) => (
+                <button 
+                  key={cat}
+                  onClick={() => setUserCategory(cat)}
+                  className={cn(
+                    "px-4 py-1.5 rounded-lg transition-all",
+                    userCategory === cat ? "bg-sage text-white shadow-sm" : "text-earth hover:bg-white/50"
+                  )}
+                >
+                  {cat}
+                </button>
+              ))}
+            </div>
+          )}
         </header>
 
         <AnimatePresence mode="wait">
@@ -1883,29 +1901,14 @@ Certified by TradieTax AI Compliance Engine v2.0
               <div className="bg-white rounded-3xl p-6 shadow-sm border border-stone">
                 <div className="flex justify-between items-center mb-6 px-1">
                   <div className="flex items-center gap-3">
-                    <div className={cn("p-2 rounded-xl bg-opacity-10", 
-                      userCategory === 'Sole Trader' ? "bg-sage" : 
-                      userCategory === 'PAYG Employment' ? "bg-blue-600" : "bg-amber-600"
-                    )}>
-                      {config.icon}
+                    <div className="p-2 rounded-xl bg-sage bg-opacity-10">
+                      <TrendingUp size={16} className="text-emerald-500" />
                     </div>
                     <div>
-                      <h3 className="font-serif italic text-xl text-sage">{config.revenue} Tracking</h3>
+                      <h4 className="font-serif italic text-xl text-sage">Financial Summary</h4>
                       <p className="text-[10px] uppercase font-bold text-earth tracking-widest mt-1">
-                        {config.description}
+                        Consolidated Income & Tax Position
                       </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <label className="text-[10px] uppercase font-bold text-earth">Income Amount</label>
-                    <div className="relative">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sage font-bold">$</span>
-                      <input 
-                        type="number"
-                        className="bg-cream border border-stone rounded-xl py-2 pl-7 pr-3 text-sm font-bold w-32 focus:ring-2 focus:ring-sage/20 outline-none"
-                        value={turnover}
-                        onChange={e => setTurnover(Number(e.target.value))}
-                      />
                     </div>
                   </div>
                 </div>
@@ -1913,64 +1916,62 @@ Certified by TradieTax AI Compliance Engine v2.0
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
                   <div className="space-y-1">
                     <p className="text-[10px] uppercase font-bold text-earth opacity-60">
-                      {config.revenue}
-                      <TooltipIcon text={`Total income recorded as ${userCategory}.`} />
+                      Total Turnover
+                      <TooltipIcon text="Total consolidated income from all sources (Business & Payroll)." />
                     </p>
                     <p className="text-xl font-bold font-mono text-sage">${turnover.toLocaleString()}</p>
                   </div>
                   <div className="space-y-1">
                     <p className="text-[10px] uppercase font-bold text-earth opacity-60">
-                      {config.expense}
-                      <TooltipIcon text={`Current claimable expenses for ${userCategory}.`} />
+                      Business Deductions
+                      <TooltipIcon text="Current claimable business expenses." />
                     </p>
-                    <p className="text-xl font-bold font-mono text-earth">${(userCategory === 'Personal Apportionment' ? (businessExpenses + totalPersonalExpenses) : businessExpenses).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                    <p className="text-xl font-bold font-mono text-earth">${businessExpenses.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                   </div>
                   <div className="space-y-1">
                     <p className="text-[10px] uppercase font-bold text-earth opacity-60">
-                      {config.profit}
-                      <TooltipIcon text="Your financial position before tax." />
+                      Business Profit
+                      <TooltipIcon text="Business income minus deductible expenses." />
                     </p>
                     <p className={cn(
                       "text-xl font-bold font-mono",
-                      netProfit >= 0 ? "text-emerald-600" : "text-red-500"
-                    )}>${netProfit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                      (businessIncome - businessExpenses) >= 0 ? "text-emerald-600" : "text-red-500"
+                    )}>${(businessIncome - businessExpenses).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                   </div>
                   <div className="space-y-1">
                     <p className="text-[10px] uppercase font-bold text-earth opacity-60">
-                      {config.taxLabel}
-                      <TooltipIcon text="Estimated liability based on current income levels." />
+                      Tax Liability
+                      <TooltipIcon text="Estimated liability minus tax already paid." />
                     </p>
                     <p className="text-xl font-bold font-mono text-sage">${estimatedTax.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                   </div>
                 </div>
 
                 {/* Progress bar to GST threshold */}
-                {userCategory === 'Sole Trader' && (
-                  <div className="mt-8 pt-6 border-t border-sand">
-                    <button 
-                      onClick={() => setActiveTab('income')}
-                      className="w-full text-left group"
-                    >
-                      <div className="flex justify-between items-end mb-2">
-                        <span className="text-[10px] uppercase font-bold text-earth flex items-center gap-1">
-                          GST Registration Progress <ChevronRight size={10} className="opacity-0 group-hover:opacity-100 transition-opacity" />
-                        </span>
-                        <span className="text-[10px] font-bold text-sage">
-                          {Math.min(100, (turnover / GST_THRESHOLD) * 100).toFixed(0)}% of ${GST_THRESHOLD.toLocaleString()} threshold
-                        </span>
-                      </div>
-                      <div className="h-2 w-full bg-sand rounded-full overflow-hidden">
-                        <div 
-                          className={cn(
-                            "h-full transition-all duration-1000",
-                            turnover >= GST_THRESHOLD ? "bg-amber-500" : "bg-sage"
-                          )} 
-                          style={{ width: `${Math.min(100, (turnover / GST_THRESHOLD) * 100)}%` }}
-                        />
-                      </div>
-                    </button>
-                  </div>
-                )}
+                <div className="mt-8 pt-6 border-t border-sand">
+                  <button 
+                    onClick={() => setActiveTab('income')}
+                    className="w-full text-left group"
+                  >
+                    <div className="flex justify-between items-end mb-2">
+                      <span className="text-[10px] uppercase font-bold text-earth flex items-center gap-1">
+                        GST Registration Progress <ChevronRight size={10} className="opacity-0 group-hover:opacity-100 transition-opacity" />
+                      </span>
+                      <span className="text-[10px] font-bold text-sage">
+                        {Math.min(100, (turnover / GST_THRESHOLD) * 100).toFixed(0)}% of ${GST_THRESHOLD.toLocaleString()} threshold
+                      </span>
+                    </div>
+                    <div className="h-2 w-full bg-sand rounded-full overflow-hidden">
+                      <div 
+                        className={cn(
+                          "h-full transition-all duration-1000",
+                          turnover >= GST_THRESHOLD ? "bg-amber-500" : "bg-sage"
+                        )} 
+                        style={{ width: `${Math.min(100, (turnover / GST_THRESHOLD) * 100)}%` }}
+                      />
+                    </div>
+                  </button>
+                </div>
               </div>
 
               {/* Insights Grid */}
@@ -2027,7 +2028,7 @@ Certified by TradieTax AI Compliance Engine v2.0
                     <div className="flex justify-between items-start mb-6">
                       <div>
                         <h3 className="text-xs uppercase tracking-widest opacity-60 font-medium tracking-tight">
-                          {config.taxLabel}
+                          Estimated Tax Bill
                         </h3>
                         <p className="text-4xl font-serif italic mt-2">${estimatedTax.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                         <p className="text-sm opacity-60 mt-1">Pending for FY 2026/27</p>
@@ -2119,7 +2120,7 @@ Certified by TradieTax AI Compliance Engine v2.0
                         <span className="font-bold text-sage">{((estimatedTax / turnover) * 100).toFixed(1)}%</span>
                       </div>
                       <div className="flex justify-between text-sm">
-                        <span className="text-earth">{userCategory === 'PAYG Employment' ? 'Deduction Total' : 'Expenses'}</span>
+                        <span className="text-earth">{userCategory === 'Payroll Employment' ? 'Deduction Total' : 'Expenses'}</span>
                         <span className="font-bold text-emerald-600">${businessExpenses.toLocaleString()}</span>
                       </div>
                       <div className="pt-4 border-t border-sand flex justify-between items-center">
@@ -2319,7 +2320,7 @@ Certified by TradieTax AI Compliance Engine v2.0
                              onChange={e => setNewReceipt({...newReceipt, source: e.target.value as any})}
                            >
                              <option value="Business">Business</option>
-                             <option value="PAYG">PAYG</option>
+                             <option value="Payroll">Payroll</option>
                            </select>
                          </div>
                          <div className="space-y-1">
@@ -2419,7 +2420,7 @@ Certified by TradieTax AI Compliance Engine v2.0
                              onChange={e => setNewReceipt({...newReceipt, type: e.target.value})}
                            >
                              <option>Sole Trader</option>
-                             <option value="PAYG Employment">PAYG (Work/Salary)</option>
+                             <option value="Payroll Employment">Payroll (Work/Salary)</option>
                              <option value="Personal Apportionment">Partial / Home Office</option>
                              <option>Personal</option>
                            </select>
@@ -3530,7 +3531,7 @@ Certified by TradieTax AI Compliance Engine v2.0
                   <div>
                     <h3 className="font-serif text-lg text-sage">Income Ledger</h3>
                     <p className="text-[10px] text-earth uppercase tracking-widest font-bold opacity-60">
-                      FY26 Total: ${incomeEntries.reduce((s, i) => s + i.amount, 0).toLocaleString()}
+                      FY26 Total: ${incomeEntries.reduce((s, i) => s + (i.grossAmount || i.amount), 0).toLocaleString()}
                     </p>
                   </div>
                 </div>
@@ -3582,8 +3583,15 @@ Certified by TradieTax AI Compliance Engine v2.0
                             <div className="w-1/4 text-center text-xs font-mono text-earth/60">
                               {inc.date}
                             </div>
-                            <div className="text-right font-bold text-emerald-600 font-mono">
-                              +${inc.amount.toLocaleString()}
+                            <div className="text-right flex flex-col items-end">
+                              <span className="font-bold text-emerald-600 font-mono">
+                                +${(inc.grossAmount || inc.amount).toLocaleString()}
+                              </span>
+                              {inc.taxWithheld! > 0 && (
+                                <span className="text-[9px] text-red-500 font-bold uppercase tracking-tighter">
+                                  -${inc.taxWithheld?.toLocaleString()} tax paid
+                                </span>
+                              )}
                             </div>
                           </div>
                         ))
@@ -3649,15 +3657,19 @@ Certified by TradieTax AI Compliance Engine v2.0
                     <h4 className="text-[10px] uppercase font-bold text-earth mb-3 tracking-widest">Tax Projections</h4>
                     <div className="space-y-3">
                       <div className="flex justify-between items-center text-xs">
-                        <span className="text-earth/60">Gross Income</span>
-                        <span className="font-bold text-sage">${incomeEntries.reduce((s, i) => s + i.amount, 0).toLocaleString()}</span>
+                        <span className="text-earth/60">Total Gross Income</span>
+                        <span className="font-bold text-sage">${turnover.toLocaleString()}</span>
                       </div>
                       <div className="flex justify-between items-center text-xs">
-                        <span className="text-earth/60">PAYG Component</span>
-                        <span className="font-bold text-sage">${incomeEntries.filter(i => i.source === 'PAYG').reduce((s, i) => s + i.amount, 0).toLocaleString()}</span>
+                        <span className="text-earth/60">Total Deductions</span>
+                        <span className="font-bold text-earth">-${businessExpenses.toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between items-center text-xs font-bold text-emerald-600">
+                        <span className="opacity-70">Tax Withheld (PAYG)</span>
+                        <span>-${totalTaxWithheld.toLocaleString()}</span>
                       </div>
                       <div className="pt-3 border-t border-sand flex justify-between items-center">
-                        <span className="text-[10px] font-bold uppercase text-earth">Predicted Liability</span>
+                        <span className="text-[10px] font-bold uppercase text-earth">Net Tax Liability</span>
                         <span className="text-sm font-bold text-sage">${estimatedTax.toLocaleString()}</span>
                       </div>
                     </div>
@@ -3714,24 +3726,144 @@ Certified by TradieTax AI Compliance Engine v2.0
               </div>
 
               <div className="bg-sage text-white rounded-3xl p-8 shadow-lg">
-                <h3 className="font-serif italic text-2xl mb-4">ATO Tax Estimates</h3>
-                <p className="text-sm opacity-70 mb-6">Based on your shared PAYG and Sole Trader income, here is your projected liability.</p>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-white/10 p-4 rounded-2xl">
-                    <p className="text-[10px] uppercase opacity-50">Projected Tax</p>
-                    <p className="text-2xl font-bold">${estimatedTax.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+                <div className="flex justify-between items-start mb-6">
+                  <div>
+                    <h3 className="font-serif italic text-2xl mb-1">ATO Tax Estimate</h3>
+                    <p className="text-xs opacity-70">Unified projection based on all income sources and deductions.</p>
                   </div>
-                  {isGstRegistered ? (
-                    <div className="bg-white/10 p-4 rounded-2xl">
-                      <p className="text-[10px] uppercase opacity-50">GST Owed (BAS)</p>
-                      <p className="text-2xl font-bold">${((turnover / 11) - totalGSTCredits).toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+                  <motion.button 
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                    onClick={() => {
+                      setEditingIncomeId(null);
+                      setNewIncome({
+                        amount: 0,
+                        date: new Date().toISOString().split('T')[0],
+                        source: 'Income',
+                        description: '',
+                        documentType: 'Bank Statement'
+                      });
+                      setShowIncomeModal(true);
+                    }}
+                    className="bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest backdrop-blur-sm border border-white/10 flex items-center gap-2"
+                  >
+                    <Plus size={14} />
+                    Add Income
+                  </motion.button>
+                </div>
+                
+                <div className="flex flex-col md:flex-row gap-6 items-center">
+                  <div className="flex-1 text-center md:text-left">
+                    <p className="text-[10px] uppercase opacity-50 tracking-widest font-bold mb-1">Estimated Tax Liability</p>
+                    <p className="text-5xl font-serif tracking-tighter">${estimatedTax.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+                    {totalTaxWithheld > 0 && (
+                      <p className="text-xs mt-2 text-emerald-300 font-medium">
+                        Net of ${totalTaxWithheld.toLocaleString()} tax already withheld
+                      </p>
+                    )}
+                  </div>
+                  <div className="w-full md:w-px h-px md:h-20 bg-white/10" />
+                  <div className="grid grid-cols-2 gap-x-8 gap-y-4">
+                    <div>
+                      <p className="text-[10px] uppercase opacity-50 font-bold">Gross Income</p>
+                      <p className="text-lg font-bold">${turnover.toLocaleString()}</p>
                     </div>
-                  ) : (
-                    <div className="bg-white/5 p-4 rounded-2xl border border-white/10 opacity-60">
-                      <p className="text-[10px] uppercase opacity-50">GST (N/A)</p>
-                      <p className="text-sm italic">Not Registered</p>
+                    <div>
+                      <p className="text-[10px] uppercase opacity-50 font-bold">Deductions</p>
+                      <p className="text-lg font-bold">${businessExpenses.toLocaleString()}</p>
                     </div>
-                  )}
+                    <div>
+                      <p className="text-[10px] uppercase opacity-50 font-bold">Taxable</p>
+                      <p className="text-lg font-bold">${taxableAmount.toLocaleString()}</p>
+                    </div>
+                    {isGstRegistered && (
+                      <div>
+                        <p className="text-[10px] uppercase opacity-50 font-bold">GST (Owed)</p>
+                        <p className="text-lg font-bold">${Math.max(0, (turnover / 11) - totalGSTCredits).toLocaleString()}</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Tax Brackets Breakdown */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="bg-white p-8 rounded-[2.5rem] border border-stone/30 shadow-sm relative overflow-hidden group">
+                  <div className="absolute top-0 left-0 w-1 h-full bg-sage/20 group-hover:bg-sage transition-all" />
+                  <h4 className="font-serif italic text-xl text-sage mb-6 flex items-center gap-2">
+                    <PieChart size={18} />
+                    Tax Calculation Breakdown
+                  </h4>
+                  <div className="space-y-4">
+                    <div className="flex justify-between items-center text-sm border-b border-sand pb-4">
+                      <span className="text-earth/60">Taxable Income</span>
+                      <span className="font-bold">${taxableAmount.toLocaleString()}</span>
+                    </div>
+                    
+                    {/* Simplified Bracket Logic for UI */}
+                    <div className="space-y-3">
+                      <p className="text-[10px] uppercase font-bold text-earth/40 tracking-widest mt-2">Bracket breakdown</p>
+                      {taxableAmount > 18200 && (
+                        <div className="flex justify-between items-center text-xs">
+                          <span className="text-earth/70">$18,201 – $45,000 (16%)</span>
+                          <span className="font-mono">${Math.min(taxableAmount - 18200, 26800).toLocaleString()} base</span>
+                        </div>
+                      )}
+                      {taxableAmount > 45000 && (
+                        <div className="flex justify-between items-center text-xs">
+                          <span className="text-earth/70">$45,001 – $135,000 (30%)</span>
+                          <span className="font-mono">${Math.min(taxableAmount - 45000, 90000).toLocaleString()} base</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between items-center text-xs pt-2">
+                        <span className="text-earth/70">Medicare Levy (2%)</span>
+                        <span className="font-mono">${(taxableAmount * 0.02).toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between items-center text-xs text-emerald-600 font-bold">
+                        <span>Total Tax Withheld</span>
+                        <span>-${totalTaxWithheld.toLocaleString()}</span>
+                      </div>
+                    </div>
+
+                    <div className="pt-4 mt-2">
+                      <div className="bg-sand/30 p-3 rounded-2xl flex justify-between items-center border border-sand">
+                        <span className="text-xs font-bold text-sage uppercase tracking-wider">Final Estimate</span>
+                        <span className="text-xl font-serif italic text-sage">${estimatedTax.toLocaleString()}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-[#fdfcf8] p-8 rounded-[2.5rem] border border-stone/30 shadow-sm relative overflow-hidden group">
+                  <div className="absolute top-0 left-0 w-1 h-full bg-amber-200 group-hover:bg-amber-400 transition-all" />
+                  <h4 className="font-serif italic text-xl text-earth mb-6 flex items-center gap-2">
+                    <TrendingUp size={18} />
+                    Tax Minimisation Strategy
+                  </h4>
+                  <div className="space-y-4">
+                    <p className="text-sm text-earth/70 leading-relaxed">
+                      Your current effective tax rate is <span className="font-bold text-sage underline decoration-sage/30 decoration-2">{((estimatedTax / Math.max(1, turnover)) * 100).toFixed(1)}%</span>.
+                    </p>
+                    <div className="p-4 bg-white/50 border border-sand rounded-2xl space-y-3">
+                      <div className="flex gap-3 items-start">
+                        <div className="w-6 h-6 bg-emerald-100 rounded-full flex-shrink-0 flex items-center justify-center mt-1">
+                          <Check size={12} className="text-emerald-600" />
+                        </div>
+                        <p className="text-xs text-earth/80">
+                          <strong>Asset Threshold:</strong> You have claimable assets totalling <span className="font-bold">${receipts.filter(r => r.isAsset).reduce((s, r) => s + r.total, 0).toLocaleString()}</span>. Consider immediate write-offs for tools under $30,000.
+                        </p>
+                      </div>
+                      <div className="flex gap-3 items-start">
+                        <div className="w-6 h-6 bg-emerald-100 rounded-full flex-shrink-0 flex items-center justify-center mt-1">
+                          <Check size={12} className="text-emerald-600" />
+                        </div>
+                        <p className="text-xs text-earth/80">
+                          <strong>Logbook usage:</strong> Your current business usage average is <span className="font-bold">68%</span>. Increasing this via consistent logbook entries could save you up to $1,200 in tax.
+                        </p>
+                      </div>
+                    </div>
+                    <p className="text-[10px] text-earth/40 italic">Calculations are based on 2024-25 Australian individual tax rates and Medicare Levy.</p>
+                  </div>
                 </div>
               </div>
             </motion.div>
@@ -3813,11 +3945,13 @@ Certified by TradieTax AI Compliance Engine v2.0
             exit={{ opacity: 0, y: 20, x: '-50%' }}
             className={cn(
               "fixed bottom-28 md:bottom-8 left-1/2 -translate-x-1/2 z-[60] px-6 py-3 rounded-2xl shadow-xl flex items-center gap-3 border backdrop-blur-md",
-              toast.type === 'success' ? "bg-sage/90 text-white border-emerald-400/20" : "bg-red-600/90 text-white border-red-400/20"
+              toast.type === 'success' ? "bg-sage/90 text-white border-emerald-400/20" : 
+              toast.type === 'info' ? "bg-earth/90 text-white border-white/20" : "bg-red-600/90 text-white border-red-400/20"
             )}
           >
             <div className="bg-white/20 p-1 rounded-full">
-              {toast.type === 'success' ? <Check size={16} /> : <Plus size={16} className="rotate-45" />}
+              {toast.type === 'success' ? <Check size={16} /> : 
+               toast.type === 'info' ? <FileText size={16} /> : <Plus size={16} className="rotate-45" />}
             </div>
             <span className="text-sm font-bold tracking-tight">{toast.message}</span>
           </motion.div>
@@ -3886,6 +4020,25 @@ Certified by TradieTax AI Compliance Engine v2.0
             onExport={executeExport}
             options={exportOptions}
             setOptions={setExportOptions}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showScanWarning && (
+          <ScanWarningModal 
+            onClose={() => {
+              setShowScanWarning(false);
+              setPendingScanData(null);
+            }}
+            onConfirm={() => {
+              if (pendingScanData) {
+                processScanData(pendingScanData);
+              }
+              setShowScanWarning(false);
+              setPendingScanData(null);
+            }}
+            data={pendingScanData}
           />
         )}
       </AnimatePresence>
@@ -4091,10 +4244,12 @@ function IncomeModal({ onClose, onSave, newIncome, setNewIncome, isEditing, onDe
           <p className="text-white/60 text-xs mt-2 uppercase tracking-widest font-bold">{isEditing ? 'Update your ledger entry' : 'Tax Predictor Input'}</p>
         </div>
         
-        <form onSubmit={onSave} className="p-8 space-y-6 bg-cream">
+        <form onSubmit={onSave} className="p-8 space-y-5 bg-cream overflow-y-auto max-h-[70vh]">
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2 space-y-1">
-              <label className="text-[10px] uppercase font-bold text-earth px-1">Gross Income Amount</label>
+              <label className="text-[10px] uppercase font-bold text-earth px-1">
+                {newIncome.source === 'Payroll' ? 'Net Pay (Bank Received)' : 'Gross Income Amount'}
+              </label>
               <div className="relative">
                 <span className="absolute left-4 top-1/2 -translate-y-1/2 text-earth/40 text-sm font-bold">$</span>
                 <input 
@@ -4108,21 +4263,52 @@ function IncomeModal({ onClose, onSave, newIncome, setNewIncome, isEditing, onDe
               </div>
             </div>
 
-            <div className="space-y-1 text-left">
+            {newIncome.source === 'Payroll' && (
+              <>
+                <div className="col-span-1 space-y-1">
+                  <label className="text-[10px] uppercase font-bold text-earth px-1">Gross Pay</label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-earth/40 text-xs font-bold">$</span>
+                    <input 
+                      type="number"
+                      placeholder="0.00"
+                      className="w-full bg-white border border-stone rounded-xl p-3 pl-6 text-sm font-bold text-sage outline-none focus:ring-2 focus:ring-sage/20"
+                      value={newIncome.grossAmount || ''}
+                      onChange={e => setNewIncome({...newIncome, grossAmount: Number(e.target.value)})}
+                    />
+                  </div>
+                </div>
+                <div className="col-span-1 space-y-1">
+                  <label className="text-[10px] uppercase font-bold text-earth px-1 text-red-600">Tax Withheld</label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-earth/40 text-xs font-bold">$</span>
+                    <input 
+                      type="number"
+                      placeholder="0.00"
+                      className="w-full bg-white border border-red-100 rounded-xl p-3 pl-6 text-sm font-bold text-red-600 outline-none focus:ring-2 focus:ring-red-200"
+                      value={newIncome.taxWithheld || ''}
+                      onChange={e => setNewIncome({...newIncome, taxWithheld: Number(e.target.value)})}
+                    />
+                  </div>
+                </div>
+              </>
+            )}
+
+            <div className="col-span-1 space-y-1 text-left">
               <label className="text-[10px] uppercase font-bold text-earth px-1">Source</label>
               <select 
                 className="w-full bg-white border border-stone rounded-2xl p-4 text-sm outline-none focus:ring-2 focus:ring-sage/20"
                 value={newIncome.source}
                 onChange={e => setNewIncome({...newIncome, source: e.target.value as any})}
               >
-                <option value="Sales">Gross Sales</option>
-                <option value="PAYG">PAYG Wages</option>
+                <option value="Income">Business Income</option>
+                <option value="Payroll">Payroll Wages</option>
                 <option value="Interest">Interest</option>
                 <option value="Other">Other</option>
               </select>
             </div>
 
-            <div className="space-y-1 text-left">
+            <div className="col-span-1 space-y-1 text-left">
               <label className="text-[10px] uppercase font-bold text-earth px-1">Evidence Type</label>
               <select 
                 className="w-full bg-white border border-stone rounded-2xl p-4 text-sm outline-none focus:ring-2 focus:ring-sage/20"
@@ -4131,7 +4317,7 @@ function IncomeModal({ onClose, onSave, newIncome, setNewIncome, isEditing, onDe
               >
                 <option value="Payment Slip">Payment Slip</option>
                 <option value="Bank Statement">Bank Statement</option>
-                <option value="Sales Receipt">Sales Receipt</option>
+                <option value="Income Receipt">Income Receipt</option>
               </select>
             </div>
 
@@ -4233,6 +4419,77 @@ function MobButton({ active, icon, onClick }: { active: boolean, icon: ReactNode
   );
 }
 
+function ScanWarningModal({ 
+  onClose, 
+  onConfirm, 
+  data 
+}: { 
+  onClose: () => void, 
+  onConfirm: () => void, 
+  data: DocumentAnalysis | null 
+}) {
+  if (!data) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 20 }}
+        className="bg-white w-full max-w-sm rounded-[2.5rem] shadow-2xl overflow-hidden"
+      >
+        <div className="bg-amber-500 p-6 text-white text-center">
+          <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-4">
+            <AlertTriangle size={32} />
+          </div>
+          <h3 className="font-serif italic text-2xl">Unclear Scan Detected</h3>
+          <p className="text-white/80 text-xs mt-2 uppercase tracking-widest font-bold">Inaccuracy Warning</p>
+        </div>
+        
+        <div className="p-8 bg-cream space-y-6">
+          <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl">
+            <p className="text-xs font-bold text-amber-800 uppercase mb-1">Observation</p>
+            <p className="text-sm text-amber-900 leading-relaxed italic">
+              "{data.unclearReason || 'The AI found this document difficult to read clearly. Information like the total amount or date might be incorrect.'}"
+            </p>
+          </div>
+
+          <div className="space-y-3">
+            <div className="flex justify-between items-center text-sm">
+              <span className="text-earth/60">Detected Vendor</span>
+              <span className="font-bold text-sage">{data.vendor}</span>
+            </div>
+            <div className="flex justify-between items-center text-sm">
+              <span className="text-earth/60">Detected Amount</span>
+              <span className="font-bold text-sage">${data.total.toLocaleString()}</span>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-3">
+            <button 
+              onClick={onConfirm}
+              className="w-full bg-sage text-white py-4 rounded-2xl text-sm font-bold shadow-lg hover:bg-emerald-800 transition-all flex items-center justify-center gap-2"
+            >
+              <Check size={18} />
+              Confirm Anyway
+            </button>
+            <button 
+              onClick={onClose}
+              className="w-full bg-white border border-stone text-earth py-4 rounded-2xl text-sm font-bold hover:bg-sand transition-all"
+            >
+              Discard & Re-scan
+            </button>
+          </div>
+          
+          <p className="text-[10px] text-center text-earth/40 italic">
+            Tip: Ensure good lighting and flat placement for better accuracy.
+          </p>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
 function QuickActionCard({ icon, label, description, onClick }: { icon: ReactNode, label: string, description: string, onClick: () => void }) {
   return (
     <button 
@@ -4325,7 +4582,7 @@ function ReceiptRow({ receipt, onUpdate, onClick, categories, isGstRegistered }:
                 onChange={e => onUpdate({ ...receipt, type: e.target.value as any, businessUsage: e.target.value === 'Personal Apportionment' ? (receipt.businessUsage || 50) : (e.target.value === 'Personal' ? 0 : 100) })}
               >
                 <option value="Sole Trader">Sole Trader</option>
-                <option value="PAYG Employment">PAYG</option>
+                <option value="Payroll Employment">Payroll</option>
                 <option value="Personal Apportionment">Apportioned</option>
                 <option>Personal</option>
               </select>

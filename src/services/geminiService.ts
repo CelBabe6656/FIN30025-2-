@@ -1,28 +1,50 @@
 import { GoogleGenAI, Type } from "@google/genai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+let genAI: GoogleGenAI | null = null;
 
-export interface ReceiptData {
-  vendor: string;
-  date: string;
-  total: number;
-  gst: number;
-  subtotal: number;
-  items: Array<{ name: string; price: number; category?: string }>;
-  category: string;
-  isAsset: boolean;
-  depreciationRate?: number;
-  purchaseYear?: number;
-  notes?: string;
+function getAI() {
+  if (!genAI) {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      throw new Error("GEMINI_API_KEY is not defined. Please set it in your environment variables.");
+    }
+    genAI = new GoogleGenAI({ apiKey });
+  }
+  return genAI;
 }
 
-const receiptSchema = {
+export interface DocumentAnalysis {
+  documentType: 'Expense' | 'Income' | 'Payroll';
+  vendor: string; // or Employer
+  date: string;
+  total: number; // Net amount for PaySlip, inclusive amount for Sales/Expense
+  gst?: number;
+  subtotal?: number;
+  items?: Array<{ name: string; price: number; category?: string }>;
+  category: string;
+  isAsset: boolean;
+  // PaySlip specific
+  grossAmount?: number; 
+  taxWithheld?: number;
+  superannuation?: number;
+  notes?: string;
+  // New: Confidence and warnings
+  confidence: 'high' | 'low';
+  unclearReason?: string;
+}
+
+const documentSchema = {
   type: Type.OBJECT,
   properties: {
-    vendor: { type: Type.STRING },
+    documentType: { 
+      type: Type.STRING, 
+      enum: ["Expense", "Income", "Payroll"],
+      description: "Expense: money spent. Income: money received from clients (Sales/Invoices). Payroll: Wages from an employer (Pay Slip)."
+    },
+    vendor: { type: Type.STRING, description: "Vendor name for expenses, Client name for income, or Employer name for payroll documents" },
     date: { type: Type.STRING, description: "Format: YYYY-MM-DD" },
-    total: { type: Type.NUMBER },
-    gst: { type: Type.NUMBER },
+    total: { type: Type.NUMBER, description: "Total amount on document. For Payroll, this is the NET pay." },
+    gst: { type: Type.NUMBER, description: "GST amount if applicable." },
     subtotal: { type: Type.NUMBER },
     items: {
       type: Type.ARRAY,
@@ -31,40 +53,62 @@ const receiptSchema = {
         properties: {
           name: { type: Type.STRING },
           price: { type: Type.NUMBER },
-          category: { type: Type.STRING, description: "e.g. Tools, Materials, Personal" }
+          category: { type: Type.STRING }
         }
       }
     },
-    category: { type: Type.STRING },
-    isAsset: { type: Type.BOOLEAN, description: "True if any single item or total is over $300 and likely a tool/equipment" },
-    depreciationRate: { type: Type.NUMBER, description: "Depreciation rate per year as a whole number (e.g. 20 for 20%)" },
-    purchaseYear: { type: Type.NUMBER, description: "Year of purchase (e.g. 2025)" },
-    notes: { type: Type.STRING }
+    category: { 
+      type: Type.STRING, 
+      description: "Match to most relevant Australian tax category from: Tools & Equipment, Materials, Fuel & Transport, Insurance, Professional Fees, Office & Admin, Subcontractors, Printing & Stationary, Repairs & Maintenance, Uniforms & PPE, Travel, Sales, Services, Wages." 
+    },
+    isAsset: { type: Type.BOOLEAN, description: "True if document represents a tool/equipment over $300 (Depreciable Asset)" },
+    grossAmount: { type: Type.NUMBER, description: "For Payroll: Total pay before tax (Gross)." },
+    taxWithheld: { type: Type.NUMBER, description: "For Payroll/Income: Total tax withheld (PAYG)." },
+    superannuation: { type: Type.NUMBER, description: "For Payroll: Super contribution amount." },
+    notes: { type: Type.STRING, description: "Any additional details or itemised breakdowns found." },
+    confidence: { type: Type.STRING, enum: ["high", "low"], description: "Use 'low' if document is blurry, cut off, or details are ambiguous." },
+    unclearReason: { type: Type.STRING, description: "Reason why the scan might be inaccurate." }
   },
-  required: ["vendor", "total", "date"]
+  required: ["documentType", "vendor", "total", "date", "confidence", "category"]
 };
 
-export async function analyzeReceipt(base64Image: string): Promise<ReceiptData | null> {
+export async function analyzeDocument(base64Image: string, mimeType: string = "image/jpeg"): Promise<DocumentAnalysis | null> {
   try {
+    const ai = getAI();
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: [
         {
           parts: [
-            { text: "Extract receipt data for an Australian sole trader. If it's a Bunnings PowerPass invoice, carefully split 'Materials' (consumables) from 'Tools' (assets). Flag anything over $300 as an asset for depreciation." },
-            { inlineData: { mimeType: "image/jpeg", data: base64Image } }
+            { text: `Analyze this document for an Australian Sole Trader/Tradie. 
+            
+            EXTRACTOR RULES:
+            1. Detect if it is an Expense receipt, a Business Income Invoice, or a Payroll Pay Slip.
+            2. For EXPENSES: Categorise into one of [Tools & Equipment, Materials, Fuel & Transport, Insurance, Professional Fees, Office & Admin, Subcontractors, Printing & Stationary, Repairs & Maintenance, Uniforms & PPE, Travel].
+            3. For INCOME: Use categories like [Sales, Services, Interest, Other].
+            4. For PAYROLL: Use 'Wages' or 'Salary'. Extract Gross Pay and Tax Withheld.
+            5. BUNNINGS/RECCIES: If multiple items exist, detect which are 'Tools' (assets if >$300) and which are 'Materials' (consumables).
+            6. VENDOR HINTS: 
+               - Bunnings/Total Tools/Sydney Tools -> Tools & Equipment or Materials
+               - BP/Shell/Ampol/Caltex -> Fuel & Transport
+               - Officeworks -> Office & Admin or Printing & Stationary
+               - NRMA/Allianz/GIO -> Insurance
+               - Woolworths/Coles -> Usually Office & Admin (supplies) or Personal (but default to Office if on work site)
+            7. ASSETS: If an item is a durable tool/machine and costs >$300, set isAsset=true.
+            8. If image is blurry/ambiguous, set confidence='low' and explain why.` },
+            { inlineData: { mimeType, data: base64Image } }
           ]
         }
       ],
       config: {
         responseMimeType: "application/json",
-        responseSchema: receiptSchema
+        responseSchema: documentSchema
       }
     });
 
     if (response.text && response.text !== "undefined" && response.text !== "null") {
       try {
-        return JSON.parse(response.text) as ReceiptData;
+        return JSON.parse(response.text) as DocumentAnalysis;
       } catch (e) {
         console.error("Gemini Analysis Parsing Error:", e, "Response text:", response.text);
         return null;
@@ -79,12 +123,24 @@ export async function analyzeReceipt(base64Image: string): Promise<ReceiptData |
 
 export async function suggestCategory(vendor: string, categories: string[]): Promise<string | null> {
   try {
+    const ai = getAI();
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: [
         {
           parts: [
-            { text: `Given the vendor name "${vendor}", suggest the most appropriate category from this list: ${categories.join(", ")}. Return ONLY the category name.` }
+            { text: `You are an Australian tax expert for tradies. 
+            Given the vendor name "${vendor}", suggest the most appropriate category from this list: ${categories.join(", ")}. 
+            
+            HINTS for tradies:
+            - Bunnings, Total Tools, Sydney Tools -> Tools & Equipment or Materials
+            - BP, Shell, Ampol, Caltex, Puma -> Fuel & Transport
+            - Officeworks, Australia Post -> Office & Admin
+            - GIO, Allianz, NRMA, Vero -> Insurance
+            - Telstra, Optus, Aussie Broadband -> Utility (or Office & Admin)
+            - Repco, Supercheap Auto -> Repairs & Maintenance
+            
+            Return ONLY the category name matching the list exactly.` }
           ]
         }
       ],
@@ -106,6 +162,7 @@ export async function suggestCategory(vendor: string, categories: string[]): Pro
 
 export async function chatWithTradie(messages: Array<{ role: 'user' | 'assistant', content: string }>, context: string): Promise<string> {
   try {
+    const ai = getAI();
     const history = messages.slice(0, -1).map(m => ({
       role: m.role === 'assistant' ? 'model' : 'user',
       parts: [{ text: m.content }]
