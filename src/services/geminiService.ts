@@ -4,11 +4,11 @@ let genAI: GoogleGenAI | null = null;
 
 function getAI() {
   if (!genAI) {
-    const apiKey = process.env.GEMINI_API_KEY || (typeof window !== 'undefined' ? (window as any).process?.env?.GEMINI_API_KEY : undefined);
-    if (!apiKey || apiKey === "undefined") {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
       throw new Error("GEMINI_API_KEY is not defined. Please set it in your environment variables.");
     }
-    genAI = new GoogleGenAI(apiKey);
+    genAI = new GoogleGenAI({ apiKey });
   }
   return genAI;
 }
@@ -72,7 +72,7 @@ const documentSchema = {
   required: ["documentType", "vendor", "total", "date", "confidence", "category"]
 };
 
-export async function analyzeDocument(base64Image: string): Promise<DocumentAnalysis | null> {
+export async function analyzeDocument(base64Image: string, mimeType: string = "image/jpeg"): Promise<DocumentAnalysis | null> {
   try {
     const ai = getAI();
     const response = await ai.models.generateContent({
@@ -96,7 +96,7 @@ export async function analyzeDocument(base64Image: string): Promise<DocumentAnal
                - Woolworths/Coles -> Usually Office & Admin (supplies) or Personal (but default to Office if on work site)
             7. ASSETS: If an item is a durable tool/machine and costs >$300, set isAsset=true.
             8. If image is blurry/ambiguous, set confidence='low' and explain why.` },
-            { inlineData: { mimeType: "image/jpeg", data: base64Image } }
+            { inlineData: { mimeType, data: base64Image } }
           ]
         }
       ],

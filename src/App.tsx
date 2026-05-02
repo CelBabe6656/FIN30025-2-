@@ -196,6 +196,47 @@ const VENDOR_CATEGORY_MAP: { [key: string]: string } = {
   'optus': 'Office & Admin'
 };
 
+const compressImage = (file: File): Promise<{ base64: string, mimeType: string }> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+        const MAX_DIM = 2048;
+        if (width > height) {
+          if (width > MAX_DIM) {
+            height *= MAX_DIM / width;
+            width = MAX_DIM;
+          }
+        } else {
+          if (height > MAX_DIM) {
+            width *= MAX_DIM / height;
+            height = MAX_DIM;
+          }
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+          const base64 = dataUrl.split(',')[1];
+          resolve({ base64, mimeType: 'image/jpeg' });
+        } else {
+          reject(new Error('Canvas context not available'));
+        }
+      };
+      img.onerror = () => reject(new Error('Failed to load image for processing.'));
+      img.src = event.target?.result as string;
+    };
+    reader.onerror = () => reject(new Error('Failed to read file from device.'));
+    reader.readAsDataURL(file);
+  });
+};
+
 function GSTCalculator() {
   const [amount, setAmount] = useState<number | ''>('');
   const [isInclusive, setIsInclusive] = useState(true);
@@ -891,9 +932,9 @@ export default function App() {
   const [pendingScanData, setPendingScanData] = useState<DocumentAnalysis | null>(null);
   const [tipIndex, setTipIndex] = useState(0);
   const [isSuggestingCategory, setIsSuggestingCategory] = useState(false);
-  const [toast, setToast] = useState<{message: string; type: 'success' | 'error'} | null>(null);
+  const [toast, setToast] = useState<{message: string; type: 'success' | 'error' | 'info'} | null>(null);
 
-  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3000);
   };
@@ -1319,18 +1360,11 @@ Certified by TradieTax AI Compliance Engine v2.0
     setIsScanning(true);
     
     try {
-      // Convert file to base64
-      const reader = new FileReader();
-      const base64Promise = new Promise<string>((resolve) => {
-        reader.onload = () => {
-          const base64 = (reader.result as string).split(',')[1];
-          resolve(base64);
-        };
-      });
-      reader.readAsDataURL(file);
-      const base64 = await base64Promise;
-
-      const data = await analyzeDocument(base64);
+      showToast('Processing image...', 'info');
+      const { base64, mimeType } = await compressImage(file);
+      
+      showToast('Analyzing with AI...', 'info');
+      const data = await analyzeDocument(base64, mimeType);
       
       if (data) {
         if (data.confidence === 'low') {
@@ -1340,13 +1374,16 @@ Certified by TradieTax AI Compliance Engine v2.0
           processScanData(data);
         }
       } else {
-        showToast('Could not analyze document. Please entry manually.', 'error');
+        showToast('AI could not read receipt clearly. Try better lighting.', 'error');
       }
     } catch (error) {
       console.error("Scan error:", error);
-      showToast('Error scanning document.', 'error');
+      const msg = error instanceof Error ? error.message : 'Error scanning document.';
+      showToast(msg, 'error');
     } finally {
       setIsScanning(false);
+      // Reset input so same file can be scanned again if needed
+      e.target.value = '';
     }
   };
 
@@ -3908,11 +3945,13 @@ Certified by TradieTax AI Compliance Engine v2.0
             exit={{ opacity: 0, y: 20, x: '-50%' }}
             className={cn(
               "fixed bottom-28 md:bottom-8 left-1/2 -translate-x-1/2 z-[60] px-6 py-3 rounded-2xl shadow-xl flex items-center gap-3 border backdrop-blur-md",
-              toast.type === 'success' ? "bg-sage/90 text-white border-emerald-400/20" : "bg-red-600/90 text-white border-red-400/20"
+              toast.type === 'success' ? "bg-sage/90 text-white border-emerald-400/20" : 
+              toast.type === 'info' ? "bg-earth/90 text-white border-white/20" : "bg-red-600/90 text-white border-red-400/20"
             )}
           >
             <div className="bg-white/20 p-1 rounded-full">
-              {toast.type === 'success' ? <Check size={16} /> : <Plus size={16} className="rotate-45" />}
+              {toast.type === 'success' ? <Check size={16} /> : 
+               toast.type === 'info' ? <FileText size={16} /> : <Plus size={16} className="rotate-45" />}
             </div>
             <span className="text-sm font-bold tracking-tight">{toast.message}</span>
           </motion.div>
