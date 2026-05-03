@@ -2,13 +2,18 @@ import { GoogleGenAI, Type } from "@google/genai";
 
 let genAI: GoogleGenAI | null = null;
 
+const isServer = typeof window === 'undefined';
+
 function getAI() {
+  if (!isServer) return null;
   if (!genAI) {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-      throw new Error("GEMINI_API_KEY is not defined. Please set it in your environment variables.");
+      console.warn("GEMINI_API_KEY is not defined in environment.");
+      throw new Error("GEMINI_API_KEY is not defined. Please check your environment variables.");
     }
-    genAI = new GoogleGenAI({ apiKey });
+    // Ensure it's a clean string
+    genAI = new GoogleGenAI({ apiKey: apiKey.trim() });
   }
   return genAI;
 }
@@ -20,13 +25,21 @@ export interface DocumentAnalysis {
   total: number; // Net amount for PaySlip, inclusive amount for Sales/Expense
   gst?: number;
   subtotal?: number;
-  items?: Array<{ name: string; price: number; category?: string }>;
+  items?: Array<{ 
+    name: string; 
+    price: number; 
+    category?: string;
+    isAsset?: boolean;
+    usefulLife?: number; // Estimated useful life in years
+  }>;
   category: string;
   isAsset: boolean;
-  // PaySlip specific
+  // PaySlip / Income specific
   grossAmount?: number; 
   taxWithheld?: number;
   superannuation?: number;
+  ytdGrossAmount?: number; // Year to Date Gross
+  ytdTaxWithheld?: number; // Year to Date Tax Withheld
   notes?: string;
   // New: Confidence and warnings
   confidence: 'high' | 'low';
@@ -53,7 +66,9 @@ const documentSchema = {
         properties: {
           name: { type: Type.STRING },
           price: { type: Type.NUMBER },
-          category: { type: Type.STRING }
+          category: { type: Type.STRING },
+          isAsset: { type: Type.BOOLEAN, description: "True if item is a durable tool/equipment over $300" },
+          usefulLife: { type: Type.NUMBER, description: "Expected life in years (e.g. 5 for laptop, 10 for drills)" }
         }
       }
     },
@@ -65,6 +80,8 @@ const documentSchema = {
     grossAmount: { type: Type.NUMBER, description: "For Payroll: Total pay before tax (Gross)." },
     taxWithheld: { type: Type.NUMBER, description: "For Payroll/Income: Total tax withheld (PAYG)." },
     superannuation: { type: Type.NUMBER, description: "For Payroll: Super contribution amount." },
+    ytdGrossAmount: { type: Type.NUMBER, description: "Year-To-Date Gross Income as shown on Payslip." },
+    ytdTaxWithheld: { type: Type.NUMBER, description: "Year-To-Date Tax Withheld as shown on Payslip." },
     notes: { type: Type.STRING, description: "Any additional details or itemised breakdowns found." },
     confidence: { type: Type.STRING, enum: ["high", "low"], description: "Use 'low' if document is blurry, cut off, or details are ambiguous." },
     unclearReason: { type: Type.STRING, description: "Reason why the scan might be inaccurate." }
@@ -73,10 +90,23 @@ const documentSchema = {
 };
 
 export async function analyzeDocument(base64Image: string, mimeType: string = "image/jpeg"): Promise<DocumentAnalysis | null> {
+  if (!isServer) {
+    const response = await fetch("/api/gemini/analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ base64Image, mimeType })
+    });
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || "AI analysis failed via proxy");
+    }
+    return response.json();
+  }
+
   try {
-    const ai = getAI();
+    const ai = getAI()!;
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-3-flash-preview", 
       contents: [
         {
           parts: [
@@ -86,16 +116,18 @@ export async function analyzeDocument(base64Image: string, mimeType: string = "i
             1. Detect if it is an Expense receipt, a Business Income Invoice, or a Payroll Pay Slip.
             2. For EXPENSES: Categorise into one of [Tools & Equipment, Materials, Fuel & Transport, Insurance, Professional Fees, Office & Admin, Subcontractors, Printing & Stationary, Repairs & Maintenance, Uniforms & PPE, Travel].
             3. For INCOME: Use categories like [Sales, Services, Interest, Other].
-            4. For PAYROLL: Use 'Wages' or 'Salary'. Extract Gross Pay and Tax Withheld.
-            5. BUNNINGS/RECCIES: If multiple items exist, detect which are 'Tools' (assets if >$300) and which are 'Materials' (consumables).
+            4. For PAYROLL: Use 'Wages' or 'Salary'. Extract Gross Pay, Tax Withheld, AND search for Year-To-Date (YTD) totals for Gross and Tax.
+            5. BUNNINGS/RECCIES: If multiple items exist, detect which are 'Tools' (isAsset if >$300) and which are 'Materials' (consumables). For assets, estimate usefulLife in years (e.g. laptop 5y, power tool 10y).
             6. VENDOR HINTS: 
                - Bunnings/Total Tools/Sydney Tools -> Tools & Equipment or Materials
                - BP/Shell/Ampol/Caltex -> Fuel & Transport
                - Officeworks -> Office & Admin or Printing & Stationary
                - NRMA/Allianz/GIO -> Insurance
                - Woolworths/Coles -> Usually Office & Admin (supplies) or Personal (but default to Office if on work site)
-            7. ASSETS: If an item is a durable tool/machine and costs >$300, set isAsset=true.
-            8. If image is blurry/ambiguous, set confidence='low' and explain why.` },
+            7. ASSETS: If an item is a durable tool/machine and costs >$300, set isAsset=true inside the items array and for the main document.
+            8. If document is a PAYSLIP (Payroll): Look specifically for "YTD Earnings" or "Total Gross Year to Date" and "YTD Tax".
+            9. CRITICAL: NEVER return an empty object or fail. Even if the image is blurry, extract the LARGEST currency figure found as the 'total' and the most prominent text as the 'vendor'. If you can't find a date, use the current date.
+            10. Set confidence='low' ONLY if you are truly guessing, but still provide your best estimate for all fields.` },
             { inlineData: { mimeType, data: base64Image } }
           ]
         }
@@ -122,8 +154,19 @@ export async function analyzeDocument(base64Image: string, mimeType: string = "i
 }
 
 export async function suggestCategory(vendor: string, categories: string[]): Promise<string | null> {
+  if (!isServer) {
+    const response = await fetch("/api/gemini/suggest-category", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ vendor, categories })
+    });
+    if (!response.ok) return null;
+    const data = await response.json();
+    return data.category;
+  }
+
   try {
-    const ai = getAI();
+    const ai = getAI()!;
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: [
@@ -161,8 +204,19 @@ export async function suggestCategory(vendor: string, categories: string[]): Pro
 }
 
 export async function chatWithTradie(messages: Array<{ role: 'user' | 'assistant', content: string }>, context: string): Promise<string> {
+  if (!isServer) {
+    const response = await fetch("/api/gemini/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages, context })
+    });
+    if (!response.ok) return "AI connection failed via proxy.";
+    const data = await response.json();
+    return data.response;
+  }
+
   try {
-    const ai = getAI();
+    const ai = getAI()!;
     const history = messages.slice(0, -1).map(m => ({
       role: m.role === 'assistant' ? 'model' : 'user',
       parts: [{ text: m.content }]
@@ -189,20 +243,16 @@ export async function chatWithTradie(messages: Array<{ role: 'user' | 'assistant
             4. Keep your answers brief and easy to read. Move straight to the point.
             5. Answer general questions about Australian tax law, accounting principles, and business finance (e.g., "What are my tax obligations as a sole trader?", "How do I calculate GST?", "What can I claim as a business expense?") without necessarily tying it back to their current totals unless requested.
             6. Maintain a "Tradie-friendly" tone: helpful, professional, and clear.
-            7. **CRITICAL**: If a question is highly complex, legal/auditorial in nature, or outside the provided context/general knowledge, you MUST politely advise the user to:
-               - Contact a registered tax agent or accountant.
-               - Call the ATO (Australian Taxation Office).
-               - Visit the official ATO website (ato.gov.au).
-            8. Do not offer professional financial or legal advice in a binding capacity; always include a disclaimer for major decisions.`,
+            Disclaimers: Advise major decisions to contact a tax agent.`,
       },
       history: history
     });
 
     const result = await chat.sendMessage({ message: lastMessage });
-    // Strip all asterisks from the result just in case
     return (result.text || "Sorry, I couldn't process that.").replace(/\*/g, '');
   } catch (error) {
     console.error("Gemini Chat Error:", error);
     return "I'm having trouble connecting to my brain right now. Please call an ATO representative or check the ATO website for official guidance.";
   }
 }
+

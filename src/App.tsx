@@ -95,6 +95,9 @@ interface ReceiptItem {
   price: number;
   category: string;
   gstApplies: boolean;
+  isAsset?: boolean;
+  usefulLife?: number;
+  depreciationRate?: number;
 }
 
 interface ReceiptEntry {
@@ -106,7 +109,9 @@ interface ReceiptEntry {
   type: string;
   receiptNumber?: string;
   source: 'Business' | 'Payroll';
-  businessUsage?: number; // Percentage (0-100)
+  businessUsage?: number; // 0-100
+  payrollUsage?: number; // 0-100
+  personalUsage?: number; // 0-100
   items?: ReceiptItem[];
   isAsset?: boolean;
   depreciationRate?: number;
@@ -121,6 +126,8 @@ interface IncomeEntry {
   amount: number;
   grossAmount?: number;
   taxWithheld?: number;
+  ytdGrossAmount?: number;
+  ytdTaxWithheld?: number;
   date: string;
   source: 'Income' | 'Payroll' | 'Interest' | 'Other';
   description: string;
@@ -196,8 +203,20 @@ const VENDOR_CATEGORY_MAP: { [key: string]: string } = {
   'optus': 'Office & Admin'
 };
 
-const compressImage = (file: File): Promise<{ base64: string, mimeType: string }> => {
+const processFile = (file: File): Promise<{ base64: string, mimeType: string }> => {
   return new Promise((resolve, reject) => {
+    if (file.type === 'application/pdf') {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const dataUrl = event.target?.result as string;
+        const base64 = dataUrl.split(',')[1];
+        resolve({ base64, mimeType: 'application/pdf' });
+      };
+      reader.onerror = () => reject(new Error('Failed to read PDF file.'));
+      reader.readAsDataURL(file);
+      return;
+    }
+
     const reader = new FileReader();
     reader.onload = (event) => {
       const img = new Image();
@@ -205,7 +224,7 @@ const compressImage = (file: File): Promise<{ base64: string, mimeType: string }
         const canvas = document.createElement('canvas');
         let width = img.width;
         let height = img.height;
-        const MAX_DIM = 2048;
+        const MAX_DIM = 2048; // Balanced resolution
         if (width > height) {
           if (width > MAX_DIM) {
             height *= MAX_DIM / width;
@@ -222,7 +241,7 @@ const compressImage = (file: File): Promise<{ base64: string, mimeType: string }
         const ctx = canvas.getContext('2d');
         if (ctx) {
           ctx.drawImage(img, 0, 0, width, height);
-          const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.88); // Optimized quality for AI
           const base64 = dataUrl.split(',')[1];
           resolve({ base64, mimeType: 'image/jpeg' });
         } else {
@@ -332,7 +351,9 @@ function ReceiptItemEditor({ items, onChange, onTotalChange, categories, isGstRe
       name: '', 
       price: 0, 
       category: 'Materials', 
-      gstApplies: true 
+      gstApplies: true,
+      isAsset: false,
+      usefulLife: 10
     };
     const updatedItems = [...items, newItem];
     onChange(updatedItems);
@@ -340,7 +361,14 @@ function ReceiptItemEditor({ items, onChange, onTotalChange, categories, isGstRe
 
   const updateItem = (idx: number, updates: Partial<ReceiptItem>) => {
     const updatedItems = [...items];
-    updatedItems[idx] = { ...updatedItems[idx], ...updates };
+    let finalUpdates = { ...updates };
+    
+    // Auto-calculate depreciation rate if useful life changes
+    if (updates.usefulLife !== undefined) {
+      finalUpdates.depreciationRate = 100 / (updates.usefulLife || 1);
+    }
+    
+    updatedItems[idx] = { ...updatedItems[idx], ...finalUpdates };
     onChange(updatedItems);
     
     if (updates.price !== undefined) {
@@ -370,7 +398,7 @@ function ReceiptItemEditor({ items, onChange, onTotalChange, categories, isGstRe
       </div>
       <div className="space-y-2">
         {items.map((item, idx) => (
-          <div key={item.id} className="bg-sand/30 p-3 rounded-xl space-y-2">
+          <div key={item.id} className="bg-sand/30 p-3 rounded-xl space-y-3">
             <div className="flex gap-2">
               <input 
                 placeholder="Item name"
@@ -386,8 +414,9 @@ function ReceiptItemEditor({ items, onChange, onTotalChange, categories, isGstRe
                 onChange={e => updateItem(idx, { price: Number(e.target.value) })}
               />
             </div>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-4">
+            
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div className="flex items-center gap-3">
                 <select 
                   className="bg-white border border-stone rounded-lg px-2 py-1 text-[10px] outline-none"
                   value={item.category}
@@ -397,33 +426,64 @@ function ReceiptItemEditor({ items, onChange, onTotalChange, categories, isGstRe
                     <option key={cat}>{cat}</option>
                   ))}
                 </select>
+
+                <div className="flex items-center gap-2">
+                   <label className="flex items-center gap-1.5 cursor-pointer">
+                    <input 
+                      type="checkbox" 
+                      className="accent-sage"
+                      checked={item.isAsset}
+                      onChange={e => updateItem(idx, { isAsset: e.target.checked })}
+                    />
+                    <span className="text-[10px] font-bold text-earth">Depreciable Asset</span>
+                  </label>
+                  {item.isAsset && (
+                    <div className="flex items-center gap-1 bg-white border border-stone rounded-lg px-1.5 py-0.5">
+                      <span className="text-[9px] font-bold text-earth/50">Life:</span>
+                      <input 
+                        type="number" 
+                        min="1" 
+                        max="50"
+                        className="w-6 text-[10px] font-bold text-sage outline-none"
+                        value={item.usefulLife || 10}
+                        onChange={e => updateItem(idx, { usefulLife: Number(e.target.value) })}
+                      />
+                      <span className="text-[9px] font-bold text-earth/50">yrs</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3">
                 {isGstRegistered && (
-                  <div className="flex items-center gap-3">
-                    <label className="flex items-center gap-2 cursor-pointer">
+                  <div className="flex items-center gap-2">
+                    <label className="flex items-center gap-1.5 cursor-pointer">
                       <input 
                         type="checkbox" 
                         className="accent-sage"
                         checked={item.gstApplies}
                         onChange={e => updateItem(idx, { gstApplies: e.target.checked })}
                       />
-                      <span className="text-[10px] uppercase font-bold text-earth">GST Applies</span>
+                      <span className="text-[10px] font-bold text-earth">GST</span>
                     </label>
-                    {item.gstApplies && (
-                      <span className="text-[10px] text-sage font-mono bg-cream px-2 py-0.5 rounded border border-stone/30">
-                        GST: ${(item.price / 11).toFixed(2)}
-                      </span>
-                    )}
                   </div>
                 )}
+                <button 
+                  type="button"
+                  onClick={() => removeItem(idx)}
+                  className="text-red-500 hover:text-red-700 bg-white/50 p-1 rounded-full"
+                >
+                  <Trash2 size={12} />
+                </button>
               </div>
-              <button 
-                type="button"
-                onClick={() => removeItem(idx)}
-                className="text-red-500 hover:text-red-700"
-              >
-                <Plus size={14} className="rotate-45" />
-              </button>
             </div>
+            
+            {item.isAsset && (
+              <div className="bg-emerald-50 border border-emerald-100 rounded-lg p-2 flex justify-between items-center text-[10px]">
+                <span className="text-emerald-800 font-medium">Annual Depreciation (Est):</span>
+                <span className="font-bold text-emerald-900">${(item.price / (item.usefulLife || 1)).toFixed(2)}</span>
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -1274,17 +1334,34 @@ Certified by TradieTax AI Compliance Engine v2.0
 
   // Unified Financials (Combined Sole Trader + Payroll)
   const getDeductibleAmount = (r: ReceiptEntry) => {
+    // If we have items, use itemized calculation
+    if (r.items && r.items.length > 0) {
+      return r.items.reduce((sum, item) => {
+        const itemNet = item.gstApplies ? item.price / 1.1 : item.price;
+        let itemClaimable = itemNet;
+        
+        if (item.isAsset) {
+          const rate = item.depreciationRate || (100 / (item.usefulLife || 10));
+          itemClaimable = itemNet * (rate / 100);
+        }
+        
+        // Multi-split usage calculation
+        const usageFactor = (r.businessUsage || 0) + (r.payrollUsage || 0);
+        return sum + (itemClaimable * (usageFactor / 100));
+      }, 0);
+    }
+
+    // Fallback to total-based calculation if no items
     const netTotal = r.total - calculateGST(r);
-    const usage = (r.category === 'Personal' || r.type === 'Personal') ? 0 : (r.businessUsage ?? 100);
+    const usageFactor = (r.businessUsage || 0) + (r.payrollUsage || 0);
     
     let claimable = netTotal;
     if (r.isAsset) {
       const rate = r.depreciationRate || 20;
-      // Calculate depreciation for the current period (simplified as 1 year of depreciation)
       claimable = netTotal * (rate / 100);
     }
     
-    return claimable * (usage / 100);
+    return claimable * (usageFactor / 100);
   };
 
   const businessExpenses = receipts
@@ -1360,10 +1437,10 @@ Certified by TradieTax AI Compliance Engine v2.0
     setIsScanning(true);
     
     try {
-      showToast('Processing image...', 'info');
-      const { base64, mimeType } = await compressImage(file);
+      showToast('Reading file...', 'info');
+      const { base64, mimeType } = await processFile(file);
       
-      showToast('Analyzing with AI...', 'info');
+      showToast('Capturing receipt...', 'info');
       const data = await analyzeDocument(base64, mimeType);
       
       if (data) {
@@ -1374,15 +1451,37 @@ Certified by TradieTax AI Compliance Engine v2.0
           processScanData(data);
         }
       } else {
-        showToast('AI could not read receipt clearly. Try better lighting.', 'error');
+        // Create a fallback "Manual Review" receipt so the user doesn't lose the flow
+        const fallback: any = {
+          documentType: 'Expense',
+          vendor: 'Manual Review Needed',
+          date: new Date().toISOString().split('T')[0],
+          total: 0,
+          category: 'Other',
+          isAsset: false,
+          confidence: 'low',
+          unclearReason: 'Scan unclear. Please fill details manually.'
+        };
+        setPendingScanData(fallback);
+        setShowScanWarning(true);
+        showToast('Receipt captured, but needs some manual filling.', 'info');
       }
     } catch (error) {
       console.error("Scan error:", error);
-      const msg = error instanceof Error ? error.message : 'Error scanning document.';
-      showToast(msg, 'error');
+      const manualDraft: any = {
+        documentType: 'Expense',
+        vendor: 'Manual Entry (Scan Error)',
+        date: new Date().toISOString().split('T')[0],
+        total: 0,
+        category: 'Other',
+        isAsset: false,
+        confidence: 'low'
+      };
+      setPendingScanData(manualDraft);
+      setShowScanWarning(true);
+      showToast('Connection issue. Created a draft for you.', 'info');
     } finally {
       setIsScanning(false);
-      // Reset input so same file can be scanned again if needed
       e.target.value = '';
     }
   };
@@ -1399,14 +1498,19 @@ Certified by TradieTax AI Compliance Engine v2.0
         source: 'Business',
         receiptNumber: '',
         businessUsage: 100,
+        payrollUsage: 0,
+        personalUsage: 0,
         items: (data.items || []).map(item => ({
           id: Math.random().toString(36).substr(2, 5),
           name: item.name,
           price: item.price,
           category: item.category || data.category || 'Other',
-          gstApplies: true
+          gstApplies: true,
+          isAsset: item.isAsset || item.price >= 300,
+          usefulLife: item.usefulLife || 10,
+          depreciationRate: 100 / (item.usefulLife || 10)
         })),
-        isAsset: data.isAsset || data.total >= 300,
+        isAsset: data.isAsset || (data.items || []).some(i => i.isAsset) || data.total >= 300,
         gstApplies: true,
         depreciationRate: 20,
         purchaseYear: new Date().getFullYear(),
@@ -1420,6 +1524,8 @@ Certified by TradieTax AI Compliance Engine v2.0
         amount: data.total,
         grossAmount: data.grossAmount,
         taxWithheld: data.taxWithheld,
+        ytdGrossAmount: data.ytdGrossAmount,
+        ytdTaxWithheld: data.ytdTaxWithheld,
         date: data.date || new Date().toISOString().split('T')[0],
         source: data.documentType === 'Payroll' ? 'Payroll' : 'Income',
         description: data.vendor + (data.documentType === 'Payroll' ? ' Pay Slip' : ' Invoice'),
@@ -2224,7 +2330,7 @@ Certified by TradieTax AI Compliance Engine v2.0
                       )}
                       <input 
                         type="file" 
-                        accept="image/*" 
+                        accept="image/*,.pdf" 
                         capture="camera" 
                         className="hidden" 
                         onChange={handleScanReceipt}
@@ -2413,36 +2519,86 @@ Certified by TradieTax AI Compliance Engine v2.0
                             )}
                           </div>
                          <div className="space-y-1">
-                           <label className="text-[10px] uppercase font-bold text-earth px-1">Tax Type</label>
+                           <label className="text-[10px] uppercase font-bold text-earth px-1">Tax Classification</label>
                            <select 
                              className="w-full bg-cream border border-stone rounded-xl p-3 text-sm outline-none"
                              value={newReceipt.type}
-                             onChange={e => setNewReceipt({...newReceipt, type: e.target.value})}
+                             onChange={e => {
+                               const val = e.target.value;
+                               if (val === 'Sole Trader') {
+                                 setNewReceipt({...newReceipt, type: val, businessUsage: 100, payrollUsage: 0, personalUsage: 0});
+                               } else if (val === 'Payroll Employment') {
+                                 setNewReceipt({...newReceipt, type: val, businessUsage: 0, payrollUsage: 100, personalUsage: 0});
+                               } else if (val === 'Personal') {
+                                 setNewReceipt({...newReceipt, type: val, businessUsage: 0, payrollUsage: 0, personalUsage: 100});
+                               } else {
+                                 setNewReceipt({...newReceipt, type: val});
+                               }
+                             }}
                            >
                              <option>Sole Trader</option>
                              <option value="Payroll Employment">Payroll (Work/Salary)</option>
-                             <option value="Personal Apportionment">Partial / Home Office</option>
+                             <option value="Personal Apportionment">Split (Business/Work/Personal)</option>
                              <option>Personal</option>
                            </select>
                          </div>
                          {newReceipt.type === 'Personal Apportionment' && (
-                           <div className="col-span-2 space-y-2 bg-cream p-4 rounded-xl border border-stone/30 mt-2">
-                             <div className="flex justify-between items-center text-[10px] uppercase font-bold text-earth">
-                               <span>Business Usage</span>
-                               <span className="text-sage">{newReceipt.businessUsage}%</span>
+                           <div className="col-span-2 space-y-4 bg-cream p-5 rounded-2xl border border-stone/30 mt-2">
+                             <div className="flex justify-between items-center text-[10px] uppercase font-bold text-earth px-1">
+                               <span>Multi-Way Split</span>
                              </div>
-                             <input 
-                               type="range" 
-                               min="0" 
-                               max="100" 
-                               step="5"
-                               className="w-full accent-sage h-1.5 bg-sand rounded-xl appearance-none cursor-pointer"
-                               value={newReceipt.businessUsage || 50}
-                               onChange={e => setNewReceipt({...newReceipt, businessUsage: Number(e.target.value)})}
-                             />
-                             <div className="flex justify-between items-center text-[9px] text-earth opacity-50">
-                               <span>Personal ({100 - (newReceipt.businessUsage || 50)}%)</span>
-                               <span>Tax Claimable (${(Number(newReceipt.total || 0) * (newReceipt.businessUsage || 50) / 100).toFixed(2)})</span>
+                             
+                             <div className="space-y-4">
+                               <div className="space-y-2">
+                                 <div className="flex justify-between text-[10px] font-bold text-sage">
+                                   <span>Sole Trader</span>
+                                   <span>{newReceipt.businessUsage || 0}%</span>
+                                 </div>
+                                 <input 
+                                   type="range" min="0" max="100" step="5"
+                                   className="w-full accent-sage h-1.5 bg-sand rounded-xl appearance-none cursor-pointer"
+                                   value={newReceipt.businessUsage || 0}
+                                   onChange={e => {
+                                     const biz = Number(e.target.value);
+                                     const remaining = 100 - biz;
+                                     const work = Math.min(newReceipt.payrollUsage || 0, remaining);
+                                     const pers = remaining - work;
+                                     setNewReceipt({...newReceipt, businessUsage: biz, payrollUsage: work, personalUsage: pers});
+                                   }}
+                                 />
+                               </div>
+
+                               <div className="space-y-2">
+                                 <div className="flex justify-between text-[10px] font-bold text-blue-600">
+                                   <span>Payroll (Work)</span>
+                                   <span>{newReceipt.payrollUsage || 0}%</span>
+                                 </div>
+                                 <input 
+                                   type="range" min="0" max="100" step="5"
+                                   className="w-full accent-blue-500 h-1.5 bg-sand rounded-xl appearance-none cursor-pointer"
+                                   value={newReceipt.payrollUsage || 0}
+                                   onChange={e => {
+                                     const work = Number(e.target.value);
+                                     const remaining = 100 - work;
+                                     const biz = Math.min(newReceipt.businessUsage || 0, remaining);
+                                     const pers = remaining - biz;
+                                     setNewReceipt({...newReceipt, payrollUsage: work, businessUsage: biz, personalUsage: pers});
+                                   }}
+                                 />
+                               </div>
+
+                               <div className="space-y-2">
+                                 <div className="flex justify-between text-[10px] font-bold text-earth/50">
+                                   <span>Personal</span>
+                                   <span>{newReceipt.personalUsage || 0}%</span>
+                                 </div>
+                                 <div className="w-full h-1.5 bg-sand rounded-xl relative overflow-hidden">
+                                    <div 
+                                     className="absolute left-0 top-0 h-full bg-earth/20 transition-all"
+                                     style={{ width: `${newReceipt.personalUsage || 0}%` }}
+                                    />
+                                 </div>
+                               </div>
                              </div>
                            </div>
                          )}
@@ -3454,10 +3610,7 @@ Certified by TradieTax AI Compliance Engine v2.0
                 <div className="bg-white p-6 rounded-3xl border border-stone shadow-sm">
                   <p className="text-[10px] uppercase font-bold text-earth mb-1">FY26 Claim Target</p>
                   <p className="text-2xl font-bold font-mono text-emerald-600">
-                    ${receipts.filter(r => r.isAsset).reduce((acc, r) => {
-                      const rate = (r.depreciationRate || 20) / 100;
-                      return acc + (r.total * rate);
-                    }, 0).toFixed(2)}
+                    ${receipts.filter(r => r.isAsset).reduce((acc, r) => acc + getDeductibleAmount(r), 0).toFixed(2)}
                   </p>
                 </div>
                 <div className="bg-white p-6 rounded-3xl border border-stone shadow-sm">
@@ -3824,6 +3977,20 @@ Certified by TradieTax AI Compliance Engine v2.0
                         <span>-${totalTaxWithheld.toLocaleString()}</span>
                       </div>
                     </div>
+
+                    {incomeEntries.some(i => i.ytdTaxWithheld && i.ytdTaxWithheld > totalTaxWithheld) && (
+                      <div className="mt-4 p-4 bg-emerald-50 rounded-2xl border border-emerald-100">
+                        <div className="flex items-center gap-2 mb-2">
+                          <CheckCircle2 size={14} className="text-emerald-600" />
+                          <h5 className="text-[10px] font-bold uppercase text-emerald-700">YTD Reconciliation Found</h5>
+                        </div>
+                        <p className="text-[10px] text-emerald-800/70 mb-2">Your latest document indicates higher YTD withholding. Would you like to use this for the projection?</p>
+                        <div className="flex justify-between items-center">
+                           <span className="text-[10px] font-medium text-emerald-900">Highest YTD Tax:</span>
+                           <span className="text-xs font-bold text-emerald-900">${Math.max(...incomeEntries.map(i => i.ytdTaxWithheld || 0)).toLocaleString()}</span>
+                        </div>
+                      </div>
+                    )}
 
                     <div className="pt-4 mt-2">
                       <div className="bg-sand/30 p-3 rounded-2xl flex justify-between items-center border border-sand">
@@ -4291,6 +4458,34 @@ function IncomeModal({ onClose, onSave, newIncome, setNewIncome, isEditing, onDe
                     />
                   </div>
                 </div>
+                
+                {/* YTD Fields */}
+                <div className="col-span-1 space-y-1">
+                  <label className="text-[9px] uppercase font-bold text-earth opacity-60 px-1">YTD Gross</label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-earth/30 text-xs font-bold">$</span>
+                    <input 
+                      type="number"
+                      placeholder="YTD Total"
+                      className="w-full bg-sand/20 border border-stone/50 rounded-xl p-3 pl-6 text-[11px] font-bold text-earth outline-none"
+                      value={newIncome.ytdGrossAmount || ''}
+                      onChange={e => setNewIncome({...newIncome, ytdGrossAmount: Number(e.target.value)})}
+                    />
+                  </div>
+                </div>
+                <div className="col-span-1 space-y-1">
+                  <label className="text-[9px] uppercase font-bold text-earth opacity-60 px-1">YTD Tax</label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-earth/30 text-xs font-bold">$</span>
+                    <input 
+                      type="number"
+                      placeholder="YTD Tax"
+                      className="w-full bg-sand/20 border border-stone/50 rounded-xl p-3 pl-6 text-[11px] font-bold text-earth outline-none"
+                      value={newIncome.ytdTaxWithheld || ''}
+                      onChange={e => setNewIncome({...newIncome, ytdTaxWithheld: Number(e.target.value)})}
+                    />
+                  </div>
+                </div>
               </>
             )}
 
@@ -4548,10 +4743,14 @@ function ReceiptRow({ receipt, onUpdate, onClick, categories, isGstRegistered }:
             <div className="flex items-center gap-1.5">
               <p className={cn(
                 "text-[9px] uppercase tracking-tighter font-bold",
-                receipt.type === 'Sole Trader' ? 'text-sage' : receipt.type === 'Personal' ? 'text-earth' : 'text-emerald-700'
-              )}>{receipt.type}</p>
-              {receipt.type === 'Personal Apportionment' && (
-                <span className="text-[8px] bg-sand px-1 rounded font-bold text-sage">{receipt.businessUsage}% Biz</span>
+                receipt.type === 'Sole Trader' ? 'text-sage' : receipt.type === 'Personal' ? 'text-earth' : 'text-blue-600'
+              )}>{receipt.type === 'Personal Apportionment' ? 'Split' : receipt.type}</p>
+              {(receipt.businessUsage! < 100 || (receipt.payrollUsage || 0) > 0 || (receipt.personalUsage || 0) > 0) && (
+                <div className="flex gap-1">
+                  {(receipt.businessUsage || 0) > 0 && <span className="text-[7px] bg-sage/10 px-1 rounded text-sage font-bold">{(receipt.businessUsage || 0)}% Biz</span>}
+                  {(receipt.payrollUsage || 0) > 0 && <span className="text-[7px] bg-blue-50 px-1 rounded text-blue-601 font-bold">{(receipt.payrollUsage || 0)}% Pay</span>}
+                  {(receipt.personalUsage || 0) > 0 && <span className="text-[7px] bg-amber-50 px-1 rounded text-amber-600 font-bold">{(receipt.personalUsage || 0)}% Pers</span>}
+                </div>
               )}
             </div>
           </div>
@@ -4575,33 +4774,63 @@ function ReceiptRow({ receipt, onUpdate, onClick, categories, isGstRegistered }:
         <div className="px-12 pb-4 bg-sand/10 border-t border-sand/30">
           <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
             <div className="space-y-1">
-              <label className="text-[10px] uppercase font-bold text-earth">Tax Type</label>
+              <label className="text-[10px] uppercase font-bold text-earth">Tax Type Allocation</label>
               <select 
                 className="w-full bg-white border border-sand rounded-xl p-2 text-xs outline-none"
                 value={receipt.type}
-                onChange={e => onUpdate({ ...receipt, type: e.target.value as any, businessUsage: e.target.value === 'Personal Apportionment' ? (receipt.businessUsage || 50) : (e.target.value === 'Personal' ? 0 : 100) })}
+                onChange={e => {
+                  const val = e.target.value;
+                  let updates: Partial<ReceiptEntry> = { type: val as any };
+                  if (val === 'Sole Trader') updates = { ...updates, businessUsage: 100, payrollUsage: 0, personalUsage: 0 };
+                  else if (val === 'Payroll Employment') updates = { ...updates, businessUsage: 0, payrollUsage: 100, personalUsage: 0 };
+                  else if (val === 'Personal') updates = { ...updates, businessUsage: 0, payrollUsage: 0, personalUsage: 100 };
+                  onUpdate({ ...receipt, ...updates });
+                }}
               >
-                <option value="Sole Trader">Sole Trader</option>
-                <option value="Payroll Employment">Payroll</option>
-                <option value="Personal Apportionment">Apportioned</option>
-                <option>Personal</option>
+                <option value="Sole Trader">Sole Trader (100% Business)</option>
+                <option value="Payroll Employment">Payroll (100% Work)</option>
+                <option value="Personal Apportionment">Partial Split (Multi-Way)</option>
+                <option value="Personal">Personal (0% Claim)</option>
               </select>
             </div>
             {receipt.type === 'Personal Apportionment' && (
-              <div className="space-y-2">
-                <div className="flex justify-between items-center text-[10px] uppercase font-bold text-earth">
-                  <span>Business Usage</span>
-                  <span className="text-sage">{receipt.businessUsage}%</span>
+              <div className="space-y-3 bg-white/50 p-4 rounded-xl border border-sand">
+                <div className="space-y-1">
+                  <div className="flex justify-between text-[10px] font-bold text-sage">
+                    <span>Sole Trader</span>
+                    <span>{receipt.businessUsage || 0}%</span>
+                  </div>
+                  <input 
+                    type="range" min="0" max="100" step="5"
+                    className="w-full accent-sage h-1 bg-sand/50 rounded-full appearance-none cursor-pointer"
+                    value={receipt.businessUsage || 0}
+                    onChange={e => {
+                      const biz = Number(e.target.value);
+                      const remaining = 100 - biz;
+                      const work = Math.min(receipt.payrollUsage || 0, remaining);
+                      const pers = remaining - work;
+                      onUpdate({...receipt, businessUsage: biz, payrollUsage: work, personalUsage: pers});
+                    }}
+                  />
                 </div>
-                <input 
-                  type="range" 
-                  min="0" 
-                  max="100" 
-                  step="5"
-                  className="w-full accent-sage h-1.5 bg-sand rounded-xl appearance-none cursor-pointer"
-                  value={receipt.businessUsage || 50}
-                  onChange={e => onUpdate({ ...receipt, businessUsage: Number(e.target.value) })}
-                />
+                <div className="space-y-1">
+                  <div className="flex justify-between text-[10px] font-bold text-blue-600">
+                    <span>Payroll (Work)</span>
+                    <span>{receipt.payrollUsage || 0}%</span>
+                  </div>
+                  <input 
+                    type="range" min="0" max="100" step="5"
+                    className="w-full accent-blue-500 h-1 bg-sand/50 rounded-full appearance-none cursor-pointer"
+                    value={receipt.payrollUsage || 0}
+                    onChange={e => {
+                      const work = Number(e.target.value);
+                      const remaining = 100 - work;
+                      const biz = Math.min(receipt.businessUsage || 0, remaining);
+                      const pers = remaining - biz;
+                      onUpdate({...receipt, payrollUsage: work, businessUsage: biz, personalUsage: pers});
+                    }}
+                  />
+                </div>
               </div>
             )}
           </div>

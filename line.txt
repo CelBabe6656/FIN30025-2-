@@ -1,1 +1,2 @@
-                             onChange={e => setNewReceipt({...newReceipt, vendor: e.target.value})}
+                           <label className="text-[10px] uppercase font-bold text-earth px-1">Tax Type</label>
+              <label className="text-[10px] uppercase font-bold text-earth">Tax Type</label>
