@@ -87,17 +87,19 @@ export async function analyzeDocument(base64Image: string, mimeType: string = "i
       contents: [
         {
           parts: [
-            { text: `Analyze this document for an Australian Sole Trader/Tradie. 
+            { text: `Analyze this document for an Australian Sole Trader/Tradie with high precision. 
             
             EXTRACTOR RULES:
-            1. Detect if it is an Expense receipt, a Business Income Invoice, or a Payroll Pay Slip.
-            2. For EXPENSES: Categorise into one of [Tools & Equipment, Materials, Fuel & Transport, Insurance, Professional Fees, Office & Admin, Subcontractors, Printing & Stationary, Repairs & Maintenance, Uniforms & PPE, Travel].
-            3. For INCOME: Use categories like [Sales, Services, Interest, Other].
-            4. For PAYROLL: Use 'Wages' or 'Salary'. Extract Gross Pay, Tax Withheld, AND search for Year-To-Date (YTD) totals for Gross and Tax.
-            5. BUNNINGS/RECCIES: If multiple items exist, detect which are 'Tools' (isAsset if >$300) and which are 'Materials' (consumables). For assets, estimate usefulLife in years (e.g. laptop 5y, power tool 10y).
-            6. ASSETS: If an item is a durable tool/machine and costs >$300, set isAsset=true inside the items array and for the main document.
-            7. CRITICAL: NEVER return an empty object or fail. Even if the image is blurry, extract the LARGEST currency figure found as the 'total' and the most prominent text as the 'vendor'. If you can't find a date, use the current date.
-            8. Set confidence='low' ONLY if you are truly guessing, but still provide your best estimate for all fields.` },
+            1. Detect Document Type: Expense Receipt, Business Income Invoice, or Payroll Pay Slip.
+            2. For EXPENSES: Categorise into: [Tools & Equipment, Materials, Fuel & Transport, Insurance, Professional Fees, Office & Admin, Subcontractors, Printing & Stationary, Repairs & Maintenance, Uniforms & PPE, Travel].
+            3. ITEM LEVEL EXTRACTION (CRITICAL):
+               - Extract EVERY line item from the receipt separately.
+               - Classify each item accurately. 
+               - If an item is a durable tool, machine, or electronic device and costs >= $300, mark isAsset=true and estimate its 'usefulLife' (e.g., Laptop=3-5y, Power Tool=5-10y, Vehicle=8-15y).
+               - Differentiate between 'Materials' (consumables like screws, glue, timber) and 'Tools' (hammers, drills, saw).
+            4. For INCOME/PAYROLL: Extract all figures including Gross, Tax Withheld, and YTD totals if present.
+            5. ATO COMPLIANCE: Australian tax law requires assets over $300 to be depreciated. Ensure this is flagged properly in the 'items' array.
+            6. Fallback: If text is unclear, extract the largest visible total and most prominent vendor name. Default confidence to 'low' if guessing.` },
             { inlineData: { mimeType, data: base64Image } }
           ]
         }

@@ -398,14 +398,24 @@ function ReceiptItemEditor({ items, onChange, onTotalChange, categories, isGstRe
       </div>
       <div className="space-y-2">
         {items.map((item, idx) => (
-          <div key={item.id} className="bg-sand/30 p-3 rounded-xl space-y-3">
+          <div key={item.id} className={cn(
+            "p-3 rounded-xl space-y-3 border transition-colors",
+            item.isAsset ? "bg-amber-50 border-amber-200 shadow-sm" : "bg-sand/30 border-transparent"
+          )}>
             <div className="flex gap-2">
-              <input 
-                placeholder="Item name"
-                className="flex-1 bg-white border border-stone rounded-lg px-2 py-1 text-xs outline-none"
-                value={item.name}
-                onChange={e => updateItem(idx, { name: e.target.value })}
-              />
+              <div className="flex-1 relative">
+                <input 
+                  placeholder="Item name"
+                  className="w-full bg-white border border-stone rounded-lg px-2 py-1 text-xs outline-none"
+                  value={item.name}
+                  onChange={e => updateItem(idx, { name: e.target.value })}
+                />
+                {item.price >= 300 && (
+                  <span className="absolute -top-1.5 -right-1.5 bg-amber-500 text-white text-[7px] font-bold px-1.5 py-0.5 rounded shadow-sm border border-white">
+                    {item.isAsset ? 'ASSET' : '> $300'}
+                  </span>
+                )}
+              </div>
               <input 
                 type="number"
                 placeholder="0.00"
@@ -969,28 +979,16 @@ export default function App() {
   const [isAddingCategory, setIsAddingCategory] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState('');
   
-  interface RiskFinding {
-    id: string;
-    level: 'low' | 'medium' | 'high';
-    title: string;
-    description: string;
-    advice?: string;
-    targetId?: string;
-    atoGuidance?: string;
-  }
-  const [findings, setFindings] = useState<RiskFinding[]>([]);
   const [showExportDialog, setShowExportDialog] = useState(false);
   const [exportOptions, setExportOptions] = useState({
     expenses: true,
     income: true,
     logbook: true,
-    audit: true,
     sbrReport: false
   });
   const [isScanning, setIsScanning] = useState(false);
   const [showScanWarning, setShowScanWarning] = useState(false);
   const [pendingScanData, setPendingScanData] = useState<DocumentAnalysis | null>(null);
-  const [tipIndex, setTipIndex] = useState(0);
   const [isSuggestingCategory, setIsSuggestingCategory] = useState(false);
   const [toast, setToast] = useState<{message: string; type: 'success' | 'error' | 'info'} | null>(null);
 
@@ -999,152 +997,6 @@ export default function App() {
     setTimeout(() => setToast(null), 3000);
   };
 
-  const runAuditScan = () => {
-    setIsScanning(true);
-    setTipIndex(prev => (prev + 1) % PROFESSIONAL_TIPS.length);
-    setTimeout(() => {
-      const newFindings: RiskFinding[] = [];
-      
-      // 1. Turnover threshold
-      if (userCategory === 'Sole Trader' && turnover > 75000 && !isGstRegistered) {
-        newFindings.push({
-          id: 'f1',
-          level: 'high',
-          title: 'Mandatory GST Registration',
-          description: `Your turnover of $${turnover.toLocaleString()} exceeds the $75,000 threshold. You are required by law to collect and remit 10% GST on your taxable sales.`,
-          advice: 'You must register for GST via the ATO Business Portal within 21 days of reaching this threshold to avoid back-dated tax liabilities and potential penalties.',
-          atoGuidance: 'https://www.ato.gov.au/business/gst/registering-for-gst'
-        });
-      }
-
-      // 2. Round numbers check
-      const roundNumbers = categoryReceipts.filter(r => r.total % 1 === 0 && r.total > 10);
-      if (roundNumbers.length > categoryReceipts.length * 0.3) {
-        newFindings.push({
-          id: 'f2',
-          level: 'medium',
-          title: 'High Volume of Round Numbers',
-          description: `${roundNumbers.length} of your ${categoryReceipts.length} expenses have exactly $0.00 cents. The ATO flags frequent "rounded" claims as potential estimates rather than actual costs.`,
-          advice: 'Ensure you are recording the EXACT amount including cents from your bank statements or digital receipts.',
-          atoGuidance: 'https://www.ato.gov.au/business/record-keeping-for-business/record-keeping-rules-for-business'
-        });
-      }
-
-      // 3. Asset Threshold check
-      const missedAssets = categoryReceipts.filter(r => !r.isAsset && r.total >= 300 && r.category !== 'Materials');
-      if (missedAssets.length > 0) {
-        newFindings.push({
-          id: 'f3',
-          level: 'medium',
-          title: 'Depreciable Assets Misclassified',
-          description: `You have ${missedAssets.length} items over $300 (e.g., tools or equipment) that are currently marked as immediate expenses.`,
-          advice: 'Review your expenses and toggle the "Asset" switch for high-value tools.',
-          atoGuidance: 'https://www.ato.gov.au/business/depreciation-and-capital-expenses-and-allowances/tool-allowances-and-depreciation'
-        });
-      }
-
-      // 4. Logbook Gap
-      const fuelReceipts = categoryReceipts.filter(r => r.category === 'Fuel');
-      const totalKm = logEntries.reduce((s, e) => s + e.km, 0);
-      if (fuelReceipts.length > 5 && totalKm < 100) {
-         newFindings.push({
-           id: 'f4',
-           level: 'high',
-           title: 'Logbook Inconsistency',
-           description: `You have recorded ${fuelReceipts.length} fuel transactions but only ${totalKm}km of business travel.`,
-           advice: 'Record your work trips daily in the "Logbook" tab.',
-           atoGuidance: 'https://www.ato.gov.au/business/income-and-deductions-for-business/deductions-for-motor-vehicle-expenses/logbook-method'
-         });
-      }
-
-      // 5. Expense Ratio
-      const totalExpenses = categoryReceipts.reduce((s, r) => s + r.total, 0);
-      if (turnover > 0 && totalExpenses / turnover > 0.7) {
-        newFindings.push({
-          id: 'f5',
-          level: 'medium',
-          title: 'High Expense Ratio',
-          description: `Your expenses represent ${(totalExpenses / turnover * 100).toFixed(0)}% of your turnover. This is significantly higher than ATO industry benchmarks.`,
-          advice: 'Audit your expenses for non-business items.',
-          atoGuidance: 'https://www.ato.gov.au/business/small-business-benchmarks/industry-benchmarks'
-        });
-      }
-
-      // 6. Bank Reconciliation Check
-      const manualCashEntries = categoryReceipts.filter(r => 
-        r.vendor.toLowerCase().includes('cash') || 
-        r.vendor.toLowerCase().includes('unknown') ||
-        (isGstRegistered && !r.gstApplies) // Only flag lack of GST as a risk if the user is registered
-      );
-      
-      const cashRiskRatio = manualCashEntries.length / Math.max(1, categoryReceipts.length);
-      if (cashRiskRatio > 0.2) {
-        newFindings.push({
-          id: 'f6',
-          level: 'high',
-          title: 'Unverifiable Bank Audit Risk',
-          description: `${manualCashEntries.length} entries appear to be cash-based or lack standard bank markers. The ATO uses "Line-by-Line" data matching with Australian banks to verify claims.`,
-          advice: 'Switch to paying all business expenses via a dedicated business bank account. Unverifiable cash claims are often the first items disallowed during an audit. Aim for 100% digital matching.',
-          atoGuidance: 'https://www.ato.gov.au/business/record-keeping-for-business/record-keeping-rules-for-business/matching-bank-statements'
-        });
-      }
-
-      setFindings(newFindings);
-      setIsScanning(false);
-      showToast('AI Audit Complete');
-    }, 1500);
-  };
-
-  const handleToggleAsset = (id: string) => {
-    setReceipts(prev => prev.map(r => 
-      r.id === id ? { ...r, isAsset: !r.isAsset } : r
-    ));
-    showToast(`Asset status updated`);
-  };
-
-  const handleExportAuditPackage = () => {
-    const report = `
-TradieTax Audit-Ready Package
-============================
-Export Date: ${new Date().toLocaleString()}
-Financial Year: 2026/27
-
-1. INCOME SUMMARY
------------------
-Total Gross Income: $${incomeEntries.reduce((s, i) => s + i.amount, 0).toLocaleString()}
-Primary Source: ${incomeEntries[0]?.source || 'None'}
-Status: All entries reconciled
-
-2. EXPENSE AUDIT
-----------------
-Total Expenses: $${receipts.reduce((s, r) => s + r.total, 0).toLocaleString()}
-High Risk (Cash): ${receipts.filter(r => r.vendor.toLowerCase().includes('cash')).length} entries
-Evidence Quality: ${receipts.length > 0 ? 'Digital Receipts Verified' : 'No Data'}
-
-3. ASSET LOG
-------------
-Total Assets: ${receipts.filter(r => r.isAsset).length}
-Current Depreciation Pool: $${receipts.filter(r => r.isAsset).reduce((acc, r) => acc + (r.total), 0).toLocaleString()}
-
-4. KM LOGBOOK
--------------
-Total Distance: ${logEntries.reduce((s, e) => s + e.km, 0)} km
-Audit Integrity Score: 98% (GPS Verified Pattern)
-
---------------------------------------------------
-Certified by TradieTax AI Compliance Engine v2.0
-    `;
-    
-    const blob = new Blob([report], { type: 'text/plain' });
-    const url = window.URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = `TradieTax_Audit_Package_FY26.txt`;
-    anchor.click();
-    window.URL.revokeObjectURL(url);
-    showToast('Audit Package Downloaded');
-  };
-   
   const [logEntries, setLogEntries] = useState<LogEntry[]>([
     { id: '1', date: '2026-04-24', km: 42.5, purpose: 'Site Visit: Cranbourne', origin: 'Pakenham', destination: 'Cranbourne' },
     { id: '2', date: '2026-04-23', km: 12.0, purpose: 'Parts pickup: Tradelink', origin: 'Cranbourne', destination: 'Narrewarren' },
@@ -1188,7 +1040,8 @@ Certified by TradieTax AI Compliance Engine v2.0
 
   const incomeFromEntries = businessIncome + paygIncome;
   const totalTaxWithheld = filteredIncomeEntries.reduce((sum, inc) => sum + (inc.taxWithheld || 0), 0);
-  const turnover = incomeFromEntries; 
+  const turnover = businessIncome; // Exclude PAYG from business turnover
+  const totalTaxableAmount = incomeFromEntries; 
   const GST_THRESHOLD = 75000;
 
   const [uploadFrequency, setUploadFrequency] = useState<UploadFrequency>('Monthly');
@@ -1313,23 +1166,48 @@ Certified by TradieTax AI Compliance Engine v2.0
     }, 0);
 
   // Tax Year Financials
-  const calculateTax = (taxableIncome: number) => {
-    if (taxableIncome <= 18200) return 0;
-    
-    let tax = 0;
-    const medicareLevy = taxableIncome * 0.02;
+  const getTaxDetailedBreakdown = (taxableIncome: number) => {
+    const breakdown = [];
+    const brackets = [
+      { cap: 18200, rate: 0, label: 'Tax Free Threshold', range: '$0 – $18,200', rateText: '0%' },
+      { cap: 45000, rate: 0.16, label: 'Lower Income', range: '$18,201 – $45,000', rateText: '16%' },
+      { cap: 135000, rate: 0.30, label: 'Middle Income', range: '$45,001 – $135,000', rateText: '30%' },
+      { cap: 190000, rate: 0.37, label: 'Higher Income', range: '$135,001 – $190,000', rateText: '37%' },
+      { cap: Infinity, rate: 0.45, label: 'Top Bracket', range: 'Over $190,001', rateText: '45%' }
+    ];
 
-    if (taxableIncome <= 45000) {
-      tax = (taxableIncome - 18200) * 0.16;
-    } else if (taxableIncome <= 135000) {
-      tax = 4288 + (taxableIncome - 45000) * 0.30;
-    } else if (taxableIncome <= 190000) {
-      tax = 31288 + (taxableIncome - 135000) * 0.37;
-    } else {
-      tax = 51638 + (taxableIncome - 190000) * 0.45;
+    let totalTax = 0;
+    let lastCap = 0;
+
+    for (const b of brackets) {
+      if (taxableIncome > lastCap) {
+        const amountInBracket = Math.min(taxableIncome, b.cap) - lastCap;
+        const taxInBracket = amountInBracket * b.rate;
+        totalTax += taxInBracket;
+        
+        if (amountInBracket > 0 || b.cap <= 18200) {
+          breakdown.push({
+            ...b,
+            amount: amountInBracket,
+            tax: taxInBracket
+          });
+        }
+        lastCap = b.cap;
+      }
     }
 
-    return tax + medicareLevy;
+    const medicareLevy = taxableIncome * 0.02;
+    return {
+      brackets: breakdown,
+      baseTax: totalTax,
+      medicareLevy,
+      totalLiability: totalTax + medicareLevy
+    };
+  };
+
+  const calculateTax = (taxableIncome: number) => {
+    const breakdown = getTaxDetailedBreakdown(taxableIncome);
+    return breakdown.totalLiability;
   };
 
   // Unified Financials (Combined Sole Trader + Payroll)
@@ -1372,8 +1250,8 @@ Certified by TradieTax AI Compliance Engine v2.0
     .filter(r => r.type === 'Personal' || r.category === 'Personal')
     .reduce((sum, r) => sum + r.total, 0);
 
-  const taxableAmount = turnover - businessExpenses; // Combined taxable income
-  const netSavings = turnover - businessExpenses - totalPersonalExpenses;
+  const taxableAmount = totalTaxableAmount - businessExpenses; // Combined taxable income
+  const netSavings = totalTaxableAmount - businessExpenses - totalPersonalExpenses;
 
   const netProfit = taxableAmount;
   const totalEstimatedTax = calculateTax(taxableAmount);
@@ -1517,7 +1395,12 @@ Certified by TradieTax AI Compliance Engine v2.0
       };
       
       setReceipts(prev => [receipt, ...prev]);
-      showToast('Receipt scanned and analyzed successfully!');
+      const itemCount = (data.items || []).length;
+      const assetCount = (data.items || []).filter(i => i.isAsset || i.price >= 300).length;
+      showToast(
+        `Enhanced scan complete: ${itemCount} items extracted. ${assetCount > 0 ? `${assetCount} assets identified.` : ''}`, 
+        'success'
+      );
     } else if (data.documentType === 'Income' || data.documentType === 'Payroll') {
       const income: IncomeEntry = {
         id: Math.random().toString(36).substr(2, 9),
@@ -1611,20 +1494,6 @@ Certified by TradieTax AI Compliance Engine v2.0
         logSheet.addRows(logEntries);
         logSheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
         logSheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4A5D4E' } };
-      }
-
-      // 4. Audit Findings
-      if (exportOptions.audit && findings.length > 0) {
-        const auditSheet = workbook.addWorksheet('Risk Audit');
-        auditSheet.columns = [
-          { header: 'Level', key: 'level', width: 10 },
-          { header: 'Alert', key: 'title', width: 30 },
-          { header: 'Description', key: 'description', width: 60 },
-          { header: 'Advice', key: 'advice', width: 60 },
-        ];
-        auditSheet.addRows(findings);
-        auditSheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
-        auditSheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4A5D4E' } };
       }
 
       // 5. Performance / SBR
@@ -1895,12 +1764,6 @@ Certified by TradieTax AI Compliance Engine v2.0
             label="Tax Predictor" 
           />
           <NavButton 
-            active={activeTab === 'audit'} 
-            onClick={() => setActiveTab('audit')}
-            icon={<AlertCircle size={20} />} 
-            label="Audit Risk" 
-          />
-          <NavButton 
             active={activeTab === 'assets'} 
             onClick={() => setActiveTab('assets')}
             icon={<TrendingUp size={20} />} 
@@ -1995,12 +1858,6 @@ Certified by TradieTax AI Compliance Engine v2.0
                   onClick={handleExport}
                   description="SBR/Excel Ready"
                 />
-                <QuickActionCard 
-                  icon={<AlertCircle className="text-purple-500" />} 
-                  label="Risk Check" 
-                  onClick={() => setActiveTab('audit')}
-                  description="ATO Benchmarks"
-                />
               </div>
 
               {/* Financial Performance Summary */}
@@ -2011,9 +1868,9 @@ Certified by TradieTax AI Compliance Engine v2.0
                       <TrendingUp size={16} className="text-emerald-500" />
                     </div>
                     <div>
-                      <h4 className="font-serif italic text-xl text-sage">Financial Summary</h4>
+                      <h4 className="font-serif italic text-xl text-sage">Business Summary</h4>
                       <p className="text-[10px] uppercase font-bold text-earth tracking-widest mt-1">
-                        Consolidated Income & Tax Position
+                        Business Income & Tax Position
                       </p>
                     </div>
                   </div>
@@ -2022,8 +1879,8 @@ Certified by TradieTax AI Compliance Engine v2.0
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
                   <div className="space-y-1">
                     <p className="text-[10px] uppercase font-bold text-earth opacity-60">
-                      Total Turnover
-                      <TooltipIcon text="Total consolidated income from all sources (Business & Payroll)." />
+                      Business Turnover
+                      <TooltipIcon text="Total income sourced from business documents. PAYG payroll is excluded." />
                     </p>
                     <p className="text-xl font-bold font-mono text-sage">${turnover.toLocaleString()}</p>
                   </div>
@@ -3119,349 +2976,6 @@ Certified by TradieTax AI Compliance Engine v2.0
             )}
           </AnimatePresence>
 
-          {activeTab === 'audit' && (
-            <motion.div 
-               key="audit"
-               initial={{ opacity: 0, scale: 0.98 }}
-               animate={{ opacity: 1, scale: 1 }}
-               className="space-y-6"
-            >
-               <div className="bg-white rounded-3xl p-8 shadow-sm border border-stone">
-                 <div className="flex flex-col md:flex-row justify-between items-center gap-6">
-                   <div className="flex-1">
-                     <h3 className="font-serif italic text-2xl text-sage mb-2">ATO Audit Risk Scan</h3>
-                     <p className="text-sm text-earth">Our AI compares your records against standard ATO benchmarks for tradies in Australia.</p>
-
-                    {/* Bank Audit Node */}
-                    <div className="mt-8 pt-6 border-t border-sand">
-                      <div className="flex items-center gap-2 mb-4">
-                        <ShieldCheck size={18} className="text-sage" />
-                        <h4 className="text-xs font-bold text-sage uppercase tracking-wider">Bank Audit Node</h4>
-                      </div>
-                      
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                         <div className="space-y-3">
-                           <div className="flex justify-between items-end">
-                             <div>
-                               <p className="text-[10px] font-bold text-earth opacity-60 uppercase">Manual / Cash Records</p>
-                               <p className="text-lg font-bold text-sage">
-                                 {receipts.filter(r => 
-                                   r.vendor.toLowerCase().includes('cash') || 
-                                   r.vendor.toLowerCase().includes('manual') || 
-                                   r.vendor.toLowerCase().includes('unknown')
-                                 ).length} <span className="text-xs font-normal text-earth opacity-70">of {receipts.length} total</span>
-                               </p>
-                             </div>
-                             <div className="text-right">
-                               <p className="text-[10px] font-bold text-earth opacity-60 uppercase">Risk Level</p>
-                               {((receipts.filter(r => 
-                                   r.vendor.toLowerCase().includes('cash') || 
-                                   r.vendor.toLowerCase().includes('manual') || 
-                                   r.vendor.toLowerCase().includes('unknown')
-                                 ).length / Math.max(1, receipts.length)) > 0.2) ? (
-                                 <span className="text-xs font-bold text-red-600 flex items-center gap-1 justify-end">
-                                   <AlertTriangle size={12} /> High Risk
-                                 </span>
-                               ) : (
-                                 <span className="text-xs font-bold text-emerald-600 flex items-center gap-1 justify-end">
-                                   <CheckCircle2 size={12} /> Low Risk
-                                 </span>
-                               )}
-                             </div>
-                           </div>
-
-                           <div className="w-full bg-sand h-2 rounded-full overflow-hidden">
-                             <div 
-                               className={cn(
-                                 "h-full transition-all duration-1000",
-                                 ((receipts.filter(r => 
-                                   r.vendor.toLowerCase().includes('cash') || 
-                                   r.vendor.toLowerCase().includes('manual') || 
-                                   r.vendor.toLowerCase().includes('unknown')
-                                 ).length / Math.max(1, receipts.length)) > 0.2) ? "bg-red-500" : "bg-sage"
-                               )}
-                               style={{ width: `${(receipts.filter(r => 
-                                 r.vendor.toLowerCase().includes('cash') || 
-                                 r.vendor.toLowerCase().includes('manual') || 
-                                 r.vendor.toLowerCase().includes('unknown')
-                               ).length / Math.max(1, receipts.length)) * 100}%` }}
-                             />
-                           </div>
-                           <p className="text-[10px] text-earth opacity-60">
-                             {((receipts.filter(r => 
-                               r.vendor.toLowerCase().includes('cash') || 
-                               r.vendor.toLowerCase().includes('manual') || 
-                               r.vendor.toLowerCase().includes('unknown')
-                             ).length / Math.max(1, receipts.length)) * 100).toFixed(1)}% of your entries lack direct bank verification markers.
-                           </p>
-                         </div>
-
-                         <div className="bg-sand/30 rounded-2xl p-4 border border-sand">
-                           <div className="flex gap-3">
-                             <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center shrink-0 shadow-sm border border-sand">
-                               <Activity size={16} className="text-sage" />
-                             </div>
-                             <div>
-                               <p className="text-[10px] font-bold text-sage uppercase mb-1">Auditor Strategy Tip</p>
-                               <p className="text-xs leading-relaxed text-earth italic">
-                                 "Switch to paying all business expenses via a dedicated business bank account. Unverifiable cash claims are often the first items disallowed during an ATO audit."
-                               </p>
-                             </div>
-                           </div>
-                         </div>
-                      </div>
-                    </div>
-                     <a 
-                       href="https://www.ato.gov.au/individuals-and-families/income-deductions-offsets-and-rebates/deductions-you-can-claim/occupation-and-industry-specific-guides/tradies-and-construction-workers-income-and-deductions" 
-                       target="_blank" 
-                       rel="noopener noreferrer"
-                       className="inline-flex items-center gap-2 text-xs font-bold text-sage mt-4 hover:bg-sand p-2 px-4 rounded-xl transition-colors border border-sand shadow-sm bg-white"
-                     >
-                        Official ATO Tradie Tax Guide <ExternalLink size={14} />
-                     </a>
-                   </div>
-                   <button 
-                     onClick={runAuditScan}
-                     disabled={isScanning}
-                     className={cn(
-                       "px-8 py-3 rounded-xl font-bold transition-all flex items-center gap-2 shadow-md active:scale-95",
-                       isScanning ? "bg-sand text-earth" : "bg-sage text-white hover:bg-emerald-900"
-                     )}
-                   >
-                     {isScanning ? (
-                        <>
-                          <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1 }}>
-                            <Settings size={18} />
-                          </motion.div>
-                          Scanning...
-                        </>
-                     ) : (
-                        <>
-                          <PieChart size={18} />
-                          Run Risk Scan
-                        </>
-                     )}
-                   </button>
-                 </div>
-               </div>
- 
-               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                  <div className="lg:col-span-2 space-y-6">
-                    <h4 className="text-[10px] uppercase font-bold text-earth px-1 tracking-widest flex items-center justify-between">
-                      <span>Actionable Risk Findings</span>
-                      <span className="text-[8px] bg-sand px-2 py-0.5 rounded text-sage">Last Scanned: {new Date().toLocaleDateString()}</span>
-                    </h4>
-
-                    {/* Data-Driven Finding: Round Numbers */}
-                    {receipts.filter(r => r.total % 1 === 0).length > 0 && (
-                      <div className="bg-amber-50 border border-amber-100 p-6 rounded-3xl group hover:shadow-md transition-all">
-                        <div className="flex items-start gap-4">
-                          <div className="bg-amber-500 text-white w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-lg shadow-amber-200">
-                            <AlertCircle size={20} />
-                          </div>
-                          <div className="flex-1">
-                            <div className="flex justify-between items-center mb-1">
-                              <p className="text-sm font-bold text-amber-900">Potential "Estimated" Expenses detected</p>
-                              <span className="text-[10px] font-bold text-amber-600 bg-white px-2 py-0.5 rounded-full uppercase italic">Risk Flag</span>
-                            </div>
-                            <p className="text-xs text-amber-800 leading-relaxed mb-4">
-                              ATO flags consistent "Round Numbers" as potential estimates. You have {receipts.filter(r => r.total % 1 === 0).length} entries (e.g. {receipts.filter(r => r.total % 1 === 0)[0].vendor} for ${receipts.filter(r => r.total % 1 === 0)[0].total.toFixed(2)}) that lack decimal precision.
-                            </p>
-                            <button 
-                              onClick={() => setActiveTab('receipts')}
-                              className="text-[10px] font-bold text-amber-900 flex items-center gap-1 hover:underline"
-                            >
-                              Check Receipts & Correct Totals <ChevronRight size={14} />
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Data-Driven Finding: Large Assets */}
-                    {receipts.filter(r => r.total > 300 && !r.isAsset).length > 0 && (
-                      <div className="bg-red-50 border border-red-100 p-6 rounded-3xl group hover:shadow-md transition-all">
-                        <div className="flex items-start gap-4">
-                          <div className="bg-red-500 text-white w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-lg shadow-red-200">
-                            <AlertTriangle size={20} />
-                          </div>
-                          <div className="flex-1">
-                            <div className="flex justify-between items-center mb-1">
-                              <p className="text-sm font-bold text-red-900">Immediate Asset Claim Required</p>
-                              <span className="text-[10px] font-bold text-red-600 bg-white px-2 py-0.5 rounded-full uppercase italic">Tax Saving</span>
-                            </div>
-                            <p className="text-xs text-red-800 leading-relaxed mb-4">
-                              Purchases over $300 must be depreciated rather than claimed as fully deductible expenses.
-                            </p>
-                            
-                            <div className="space-y-2 mb-4">
-                              {receipts.filter(r => r.total > 300 && !r.isAsset).map(r => (
-                                <div key={r.id} className="bg-white/50 p-2 rounded-xl flex justify-between items-center border border-red-100">
-                                  <span className="text-[10px] font-bold text-coal">{r.vendor} (${r.total.toLocaleString()})</span>
-                                  <button 
-                                    onClick={() => handleToggleAsset(r.id)}
-                                    className="text-[10px] bg-red-600 text-white px-3 py-1 rounded-lg font-bold hover:bg-red-700 transition-colors"
-                                  >
-                                    Move to Assets
-                                  </button>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {findings.length > 0 ? (
-                      <div className="space-y-3">
-                        {findings.map(finding => (
-                          <div key={finding.id} className={cn(
-                            "p-5 rounded-2xl border flex gap-4",
-                            finding.level === 'high' ? "bg-red-50 border-red-100" : "bg-amber-50 border-amber-100"
-                          )}>
-                            <div className={cn(
-                              "w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-sm",
-                              finding.level === 'high' ? "bg-red-500 text-white" : "bg-amber-500 text-white"
-                            )}>
-                              <AlertCircle size={20} />
-                            </div>
-                            <div>
-                              <p className={cn(
-                                "text-sm font-bold",
-                                finding.level === 'high' ? "text-red-900" : "text-amber-900"
-                              )}>{finding.title}</p>
-                               <p className={cn(
-                                "text-xs mt-1 leading-relaxed",
-                                finding.level === 'high' ? "text-red-700" : "text-amber-700"
-                              )}>{finding.description}</p>
-                              
-                               {finding.atoGuidance && (
-                                <a 
-                                  href={finding.atoGuidance} 
-                                  target="_blank" 
-                                  rel="noopener noreferrer"
-                                  className="mt-3 inline-flex items-center gap-1.5 text-xs font-bold text-sage underline underline-offset-4 hover:text-emerald-900 bg-sand/30 p-1.5 px-3 rounded-lg border border-sand transition-all hover:bg-sand"
-                                >
-                                  View ATO Guidelines <ExternalLink size={12} />
-                                </a>
-                              )}
-                              {finding.advice && (
-                                <div className={cn(
-                                  "mt-3 p-3 rounded-xl border flex gap-2 items-start",
-                                  finding.level === 'high' ? "bg-red-100/50 border-red-200" : "bg-amber-100/50 border-amber-200"
-                                )}>
-                                  <div className="shrink-0 mt-0.5">
-                                    <Lightbulb size={12} className={finding.level === 'high' ? "text-red-600" : "text-amber-600"} />
-                                  </div>
-                                  <p className={cn(
-                                    "text-[10px] leading-relaxed",
-                                    finding.level === 'high' ? "text-red-900" : "text-amber-900"
-                                  )}>
-                                    <span className="font-bold">Next Steps: </span>
-                                    {finding.advice}
-                                  </p>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      receipts.filter(r => r.total % 1 === 0).length === 0 && receipts.filter(r => r.total > 300 && !r.isAsset).length === 0 && (
-                        <div className="bg-white rounded-3xl p-12 border border-stone shadow-sm text-center">
-                          <div className="w-16 h-16 bg-cream rounded-full flex items-center justify-center mx-auto mb-4 border border-sand">
-                            <TrendingUp className="text-sage" />
-                          </div>
-                          <p className="text-sm font-serif italic text-sage">No risks identified yet.</p>
-                          <p className="text-[10px] text-earth uppercase mt-2">Run a scan to analyze your data</p>
-                        </div>
-                      )
-                    )}
-                  </div>
- 
-                  <div className="space-y-6">
-                    <h4 className="text-[10px] uppercase font-bold text-earth px-1 tracking-widest flex items-center gap-2">
-                       <Shield size={14} className="text-sage" />
-                       Compliance Performance
-                    </h4>
-                    
-                    <div className="bg-white rounded-3xl p-6 border border-stone shadow-sm h-fit">
-                      <div className="flex items-center gap-3 mb-6">
-                        <div className="w-10 h-10 bg-emerald-600 rounded-xl flex items-center justify-center text-white shadow-md shadow-emerald-200">
-                          <Activity size={20} />
-                        </div>
-                        <div>
-                          <h5 className="text-sm font-bold text-sage">Audit Documentation</h5>
-                          <p className="text-[10px] text-earth opacity-60 font-bold uppercase">FY Readiness</p>
-                        </div>
-                      </div>
-
-                      <div className="space-y-4">
-                        <div className="p-4 rounded-xl bg-sand/30 border border-sand border-dashed">
-                          <div className="flex justify-between items-center mb-1">
-                            <span className="text-[10px] font-bold text-earth opacity-60 uppercase">Logbook Integrity</span>
-                            <span className="text-xs font-bold text-sage">{logEntries.length > 0 ? "85%" : "0%"}</span>
-                          </div>
-                          <div className="w-full bg-sand/50 h-1.5 rounded-full overflow-hidden">
-                             <div 
-                               className="bg-sage h-full transition-all" 
-                               style={{ width: logEntries.length > 0 ? '85%' : '0%' }} 
-                             />
-                          </div>
-                        </div>
-
-                        <div className="p-4 rounded-xl bg-emerald-50/50 border border-emerald-100 border-dashed">
-                          <div className="flex justify-between items-center mb-1">
-                            <span className="text-[10px] font-bold text-emerald-800 opacity-60 uppercase">Bank Matching</span>
-                            <span className="text-xs font-bold text-emerald-700">{receipts.filter(r => !r.vendor.toLowerCase().includes('cash')).length} entries</span>
-                          </div>
-                          <div className="w-full bg-emerald-100 h-1.5 rounded-full overflow-hidden">
-                             <div 
-                               className="bg-emerald-600 h-full transition-all" 
-                               style={{ width: `${(receipts.filter(r => !r.vendor.toLowerCase().includes('cash')).length / Math.max(1, receipts.length)) * 100}%` }} 
-                             />
-                          </div>
-                        </div>
-
-                        <div className="pt-4 border-t border-stone/10">
-                          <h6 className="text-[10px] font-bold text-earth uppercase mb-3 text-left">Professional Advice</h6>
-                          <div className="bg-cream p-3 rounded-xl border border-stone/30 flex gap-3 min-h-[60px] items-center overflow-hidden">
-                             <AnimatePresence mode="wait">
-                               <motion.div 
-                                 key={tipIndex}
-                                 initial={{ opacity: 0, y: 10 }}
-                                 animate={{ opacity: 1, y: 0 }}
-                                 exit={{ opacity: 0, y: -10 }}
-                                 className="flex gap-3"
-                               >
-                                 <div className="text-sage mt-0.5 shrink-0"><CheckCircle2 size={14} /></div>
-                                 <p className="text-[10px] leading-relaxed text-earth italic text-left">
-                                   "{PROFESSIONAL_TIPS[tipIndex]}"
-                                 </p>
-                               </motion.div>
-                             </AnimatePresence>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="bg-sage p-6 rounded-3xl text-white shadow-xl shadow-sage/20 relative overflow-hidden">
-                      <div className="absolute top-0 right-0 w-24 h-24 bg-white/10 rounded-full -mr-12 -mt-12 blur-2xl" />
-                      <h5 className="text-sm font-bold mb-2 relative z-10">Export Audit-Ready Report</h5>
-                      <p className="text-xs opacity-80 mb-4 relative z-10 leading-relaxed text-left">Consolidate all income, expenses, and logbook entries into a compliance-ready audit report.</p>
-                      <button 
-                        onClick={handleExportAuditPackage}
-                        className="w-full py-3 bg-white text-sage rounded-xl font-bold text-xs hover:bg-cream transition-all flex items-center justify-center gap-2 active:scale-95 transition-transform"
-                      >
-                        <Download size={16} />
-                        Download Audit Package
-                      </button>
-                    </div>
-                  </div>
-               </div>
-            </motion.div>
-          )}
-
           {activeTab === 'logbook' && (
             <motion.div 
                key="logbook"
@@ -3948,34 +3462,67 @@ Certified by TradieTax AI Compliance Engine v2.0
                     Tax Calculation Breakdown
                   </h4>
                   <div className="space-y-4">
-                    <div className="flex justify-between items-center text-sm border-b border-sand pb-4">
-                      <span className="text-earth/60">Taxable Income</span>
-                      <span className="font-bold">${taxableAmount.toLocaleString()}</span>
+                    <div className="bg-sand/20 rounded-2xl p-4 border border-sand mb-2">
+                       <div className="flex justify-between items-center text-[10px] font-bold uppercase text-earth/50 mb-1">
+                          <span>Calculated Profit</span>
+                          <TooltipIcon text="Your gross turnover minus all business deductions." />
+                       </div>
+                       <div className="flex justify-between items-end">
+                          <span className="text-sm font-bold text-sage">Taxable Income</span>
+                          <span className="text-xl font-serif text-earth">${taxableAmount.toLocaleString()}</span>
+                       </div>
                     </div>
                     
-                    {/* Simplified Bracket Logic for UI */}
-                    <div className="space-y-3">
-                      <p className="text-[10px] uppercase font-bold text-earth/40 tracking-widest mt-2">Bracket breakdown</p>
-                      {taxableAmount > 18200 && (
-                        <div className="flex justify-between items-center text-xs">
-                          <span className="text-earth/70">$18,201 – $45,000 (16%)</span>
-                          <span className="font-mono">${Math.min(taxableAmount - 18200, 26800).toLocaleString()} base</span>
+                    <div className="space-y-2">
+                      <p className="text-[10px] uppercase font-bold text-earth/40 tracking-widest px-1">Income Brackets (2024-25)</p>
+                      
+                      {getTaxDetailedBreakdown(taxableAmount).brackets.map((b, i) => (
+                        <div key={i} className="group relative">
+                          <div className={cn(
+                            "flex justify-between items-center p-3 rounded-xl border transition-all",
+                            b.tax > 0 ? "bg-white border-stone shadow-sm" : "bg-sand/30 border-dashed border-sand opacity-60"
+                          )}>
+                            <div className="flex flex-col">
+                              <span className="text-[10px] font-bold text-sage uppercase tracking-tight">{b.label}</span>
+                              <span className="text-[10px] text-earth/60 font-mono">{b.range} ({b.rateText})</span>
+                            </div>
+                            <div className="text-right">
+                              <span className="text-[10px] block text-earth/40 font-mono">
+                                ${b.amount.toLocaleString()} In Bracket
+                              </span>
+                              <span className="text-xs font-bold text-earth">
+                                ${b.tax.toLocaleString(undefined, { minimumFractionDigits: 2 })} tax
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+
+                      <div className="flex justify-between items-center p-3 rounded-xl bg-white border border-stone shadow-sm mt-2">
+                        <div className="flex flex-col">
+                          <span className="text-[10px] font-bold text-sage uppercase tracking-tight">Medicare Levy</span>
+                          <span className="text-[10px] text-earth/60 font-mono">Standard 2.0% rate</span>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-xs font-bold text-earth">
+                            +${(taxableAmount * 0.02).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                      </div>
+
+                      {totalTaxWithheld > 0 && (
+                        <div className="flex justify-between items-center p-3 rounded-xl bg-emerald-50 border border-emerald-100 shadow-sm">
+                          <div className="flex flex-col">
+                            <span className="text-[10px] font-bold text-emerald-700 uppercase tracking-tight">Tax Withheld (PAYG)</span>
+                            <span className="text-[10px] text-emerald-600/70 font-mono">From employment/withholding</span>
+                          </div>
+                          <div className="text-right">
+                            <span className="text-xs font-bold text-emerald-600">
+                              -${totalTaxWithheld.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            </span>
+                          </div>
                         </div>
                       )}
-                      {taxableAmount > 45000 && (
-                        <div className="flex justify-between items-center text-xs">
-                          <span className="text-earth/70">$45,001 – $135,000 (30%)</span>
-                          <span className="font-mono">${Math.min(taxableAmount - 45000, 90000).toLocaleString()} base</span>
-                        </div>
-                      )}
-                      <div className="flex justify-between items-center text-xs pt-2">
-                        <span className="text-earth/70">Medicare Levy (2%)</span>
-                        <span className="font-mono">${(taxableAmount * 0.02).toLocaleString()}</span>
-                      </div>
-                      <div className="flex justify-between items-center text-xs text-emerald-600 font-bold">
-                        <span>Total Tax Withheld</span>
-                        <span>-${totalTaxWithheld.toLocaleString()}</span>
-                      </div>
                     </div>
 
                     {incomeEntries.some(i => i.ytdTaxWithheld && i.ytdTaxWithheld > totalTaxWithheld) && (
@@ -4030,6 +3577,84 @@ Certified by TradieTax AI Compliance Engine v2.0
                       </div>
                     </div>
                     <p className="text-[10px] text-earth/40 italic">Calculations are based on 2024-25 Australian individual tax rates and Medicare Levy.</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Educational Section & Important Dates */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div className="lg:col-span-2 bg-white p-8 rounded-[2.5rem] border border-stone/30 shadow-sm">
+                  <h4 className="font-serif italic text-xl text-sage mb-6 flex items-center gap-2">
+                    <Lightbulb size={18} />
+                    Tax Concepts & Definitions
+                  </h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
+                    <div className="space-y-1">
+                      <h5 className="text-[10px] font-bold uppercase text-sage tracking-widest">Taxable Income</h5>
+                      <p className="text-xs text-earth/70 leading-relaxed">
+                        This is your <strong>Net Profit</strong> (Gross Income minus deductable Expenses). You only pay tax on what you actually kept after business costs.
+                      </p>
+                    </div>
+                    <div className="space-y-1">
+                      <h5 className="text-[10px] font-bold uppercase text-sage tracking-widest">Marginal Tax Rates</h5>
+                      <p className="text-xs text-earth/70 leading-relaxed">
+                        Australia uses a "progressive" system. You only pay the higher rates on the dollars <em>within</em> that bracket, not your entire income.
+                      </p>
+                    </div>
+                    <div className="space-y-1">
+                      <h5 className="text-[10px] font-bold uppercase text-sage tracking-widest">Medicare Levy</h5>
+                      <p className="text-xs text-earth/70 leading-relaxed">
+                        Most Australians pay 2% of their taxable income to help fund the public health system. This is separate from your income tax.
+                      </p>
+                    </div>
+                    <div className="space-y-1">
+                      <h5 className="text-[10px] font-bold uppercase text-sage tracking-widest">PAYG Withholding</h5>
+                      <p className="text-xs text-earth/70 leading-relaxed">
+                        If you have a job or a client withheld tax for you, this is already paid to the ATO. We subtract this from your total estimated bill.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-earth text-white p-8 rounded-[2.5rem] shadow-lg relative overflow-hidden">
+                  <div className="absolute top-0 right-0 w-24 h-24 bg-white/5 rounded-full -mr-12 -mt-12" />
+                  <h4 className="font-serif italic text-xl mb-6 flex items-center gap-2">
+                    <CalendarClock size={18} />
+                    Key Tax Dates
+                  </h4>
+                  <div className="space-y-4">
+                    <div className="flex gap-3">
+                      <div className="w-10 h-10 bg-white/10 rounded-xl flex items-center justify-center shrink-0 border border-white/10">
+                         <span className="font-serif text-lg">31</span>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-bold uppercase opacity-60">OCTOBER</p>
+                        <p className="text-xs font-medium">Individual Tax Return Deadline</p>
+                      </div>
+                    </div>
+                    <div className="flex gap-3">
+                      <div className="w-10 h-10 bg-white/10 rounded-xl flex items-center justify-center shrink-0 border border-white/10">
+                         <span className="font-serif text-lg">28</span>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-bold uppercase opacity-60">QUARTERLY (OCT, FEB, APR, JUL)</p>
+                        <p className="text-xs font-medium">BAS / GST Payment Due</p>
+                      </div>
+                    </div>
+                    <div className="flex gap-3">
+                      <div className="w-10 h-10 bg-white/10 rounded-xl flex items-center justify-center shrink-0 border border-white/10">
+                         <span className="font-serif text-lg">30</span>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-bold uppercase opacity-60">JUNE</p>
+                        <p className="text-xs font-medium">End of Financial Year</p>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="mt-6 p-4 bg-white/10 rounded-2xl border border-white/10">
+                     <p className="text-[10px] leading-relaxed opacity-80 italic">
+                       Pro Tip: Using a tax agent can extend your filing deadline until May of the following year.
+                     </p>
                   </div>
                 </div>
               </div>
@@ -4223,7 +3848,6 @@ Certified by TradieTax AI Compliance Engine v2.0
         </div>
         <MobButton active={activeTab === 'logbook'} onClick={() => setActiveTab('logbook')} icon={<History size={20} />} />
         <MobButton active={activeTab === 'assets'} onClick={() => setActiveTab('assets')} icon={<TrendingUp size={20} />} />
-        <MobButton active={activeTab === 'audit'} onClick={() => setActiveTab('audit')} icon={<AlertCircle size={20} />} />
         <MobButton active={activeTab === 'chat'} onClick={() => setActiveTab('chat')} icon={<MessageSquare size={20} />} />
         <MobButton active={activeTab === 'tax'} onClick={() => setActiveTab('tax')} icon={<Settings size={20} />} />
       </nav>
@@ -4348,12 +3972,6 @@ function ExportModal({ onClose, onExport, options, setOptions }: { onClose: () =
             desc="KM logs for business travel" 
             checked={options.logbook} 
             onChange={() => toggle('logbook')}
-          />
-          <ExportOption 
-            label="Risk Audit Report" 
-            desc="ATO alignment findings & advice" 
-            checked={options.audit} 
-            onChange={() => toggle('audit')}
           />
           <ExportOption 
             label="Performance Summary" 
@@ -4746,11 +4364,17 @@ function ReceiptRow({ receipt, onUpdate, onClick, categories, isGstRegistered }:
                 receipt.type === 'Sole Trader' ? 'text-sage' : receipt.type === 'Personal' ? 'text-earth' : 'text-blue-600'
               )}>{receipt.type === 'Personal Apportionment' ? 'Split' : receipt.type}</p>
               {(receipt.businessUsage! < 100 || (receipt.payrollUsage || 0) > 0 || (receipt.personalUsage || 0) > 0) && (
-                <div className="flex gap-1">
+                <div className="flex gap-1 flex-wrap">
                   {(receipt.businessUsage || 0) > 0 && <span className="text-[7px] bg-sage/10 px-1 rounded text-sage font-bold">{(receipt.businessUsage || 0)}% Biz</span>}
                   {(receipt.payrollUsage || 0) > 0 && <span className="text-[7px] bg-blue-50 px-1 rounded text-blue-601 font-bold">{(receipt.payrollUsage || 0)}% Pay</span>}
                   {(receipt.personalUsage || 0) > 0 && <span className="text-[7px] bg-amber-50 px-1 rounded text-amber-600 font-bold">{(receipt.personalUsage || 0)}% Pers</span>}
                 </div>
+              )}
+              {receipt.items && receipt.items.length > 0 && (
+                <span className="text-[7px] bg-stone px-1 rounded text-earth font-bold uppercase tracking-widest">Itemized</span>
+              )}
+              {receipt.isAsset && (
+                <span className="text-[7px] bg-amber-500 px-1 rounded text-white font-bold uppercase tracking-widest">Asset</span>
               )}
             </div>
           </div>
@@ -4830,6 +4454,42 @@ function ReceiptRow({ receipt, onUpdate, onClick, categories, isGstRegistered }:
                       onUpdate({...receipt, payrollUsage: work, businessUsage: biz, personalUsage: pers});
                     }}
                   />
+                </div>
+                <div className="flex justify-between items-center px-1 pt-1">
+                   <span className="text-[10px] font-bold text-amber-600 uppercase">Personal Use</span>
+                   <span className="text-[10px] font-mono font-bold text-amber-600">{receipt.personalUsage || 0}%</span>
+                </div>
+
+                <div className="pt-2 border-t border-sand/30">
+                  <p className="text-[9px] font-bold text-earth/40 uppercase mb-2">Common Split Presets</p>
+                  <div className="flex flex-wrap gap-2">
+                    {[
+                      { l: 'Tradie Ute (80%)', b: 80, w: 0 },
+                      { l: 'Mixed Tools (90%)', b: 90, w: 0 },
+                      { l: 'Work Phone (50%)', b: 50, w: 0 },
+                      { l: 'Office Prep (20%)', b: 20, w: 0 }
+                    ].map(p => (
+                      <button 
+                        key={p.l}
+                        onClick={() => onUpdate({...receipt, businessUsage: p.b, payrollUsage: p.w, personalUsage: 100 - p.b - p.w})}
+                        className="text-[9px] font-medium px-2 py-1 bg-white border border-stone rounded-lg hover:border-sage hover:text-sage transition-all"
+                      >
+                        {p.l}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="mt-3 p-3 bg-earth/5 rounded-xl border border-stone/20">
+                    <p className="text-[10px] text-earth/80 italic font-serif">
+                       <Lightbulb size={12} className="inline mr-1 text-sage" />
+                       Allocation Tip: {
+                         receipt.category.includes('Fuel') ? 'Keep a logbook for 12 weeks to justify rates over 33%. ATO defaults are very conservative for tradies without logs.' :
+                         receipt.category.includes('Tools') ? 'Expensive tools often have minor personal use (5-10%) unless they never leave the job site.' :
+                         receipt.category.includes('Office') ? 'Use the actual hours worked from home or floor space ratio if you have a dedicated studio.' :
+                         receipt.category.includes('Insurance') ? 'Professional insurance is usually 100% claimable if specific to your trade.' :
+                         'Only the portion of the expense used to generate your income is tax-deductible.'
+                       }
+                    </p>
+                  </div>
                 </div>
               </div>
             )}
