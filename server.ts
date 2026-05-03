@@ -15,47 +15,8 @@ async function startServer() {
   app.use(express.urlencoded({ limit: '20mb', extended: true }));
 
   // API routes
-  if (!process.env.GEMINI_API_KEY) {
-    console.error("CRITICAL: GEMINI_API_KEY is missing from server environment.");
-  }
-
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok" });
-  });
-
-  // Gemini Proxy Routes
-  app.post("/api/gemini/analyze", async (req, res) => {
-    try {
-      const { base64Image, mimeType } = req.body;
-      const { analyzeDocument } = await import("./src/services/geminiService.ts");
-      const result = await analyzeDocument(base64Image, mimeType);
-      res.json(result);
-    } catch (error) {
-      console.error("Server-side Gemini Error:", error);
-      res.status(500).json({ error: error instanceof Error ? error.message : "AI Analysis failed" });
-    }
-  });
-
-  app.post("/api/gemini/suggest-category", async (req, res) => {
-    try {
-      const { vendor, categories } = req.body;
-      const { suggestCategory } = await import("./src/services/geminiService.ts");
-      const result = await suggestCategory(vendor, categories);
-      res.json({ category: result });
-    } catch (error) {
-      res.status(500).json({ error: "Category suggestion failed" });
-    }
-  });
-
-  app.post("/api/gemini/chat", async (req, res) => {
-    try {
-      const { messages, context } = req.body;
-      const { chatWithTradie } = await import("./src/services/geminiService.ts");
-      const result = await chatWithTradie(messages, context);
-      res.json({ response: result });
-    } catch (error) {
-      res.status(500).json({ error: "Chat failed" });
-    }
   });
 
   // Mock folder export endpoint

@@ -2,17 +2,12 @@ import { GoogleGenAI, Type } from "@google/genai";
 
 let genAI: GoogleGenAI | null = null;
 
-const isServer = typeof window === 'undefined';
-
 function getAI() {
-  if (!isServer) return null;
   if (!genAI) {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-      console.warn("GEMINI_API_KEY is not defined in environment.");
-      throw new Error("GEMINI_API_KEY is not defined. Please check your environment variables.");
+      throw new Error("GEMINI_API_KEY is not defined.");
     }
-    // Ensure it's a clean string
     genAI = new GoogleGenAI({ apiKey: apiKey.trim() });
   }
   return genAI;
@@ -20,9 +15,9 @@ function getAI() {
 
 export interface DocumentAnalysis {
   documentType: 'Expense' | 'Income' | 'Payroll';
-  vendor: string; // or Employer
+  vendor: string; 
   date: string;
-  total: number; // Net amount for PaySlip, inclusive amount for Sales/Expense
+  total: number;
   gst?: number;
   subtotal?: number;
   items?: Array<{ 
@@ -30,18 +25,16 @@ export interface DocumentAnalysis {
     price: number; 
     category?: string;
     isAsset?: boolean;
-    usefulLife?: number; // Estimated useful life in years
+    usefulLife?: number;
   }>;
   category: string;
   isAsset: boolean;
-  // PaySlip / Income specific
   grossAmount?: number; 
   taxWithheld?: number;
   superannuation?: number;
-  ytdGrossAmount?: number; // Year to Date Gross
-  ytdTaxWithheld?: number; // Year to Date Tax Withheld
+  ytdGrossAmount?: number;
+  ytdTaxWithheld?: number;
   notes?: string;
-  // New: Confidence and warnings
   confidence: 'high' | 'low';
   unclearReason?: string;
 }
@@ -52,12 +45,12 @@ const documentSchema = {
     documentType: { 
       type: Type.STRING, 
       enum: ["Expense", "Income", "Payroll"],
-      description: "Expense: money spent. Income: money received from clients (Sales/Invoices). Payroll: Wages from an employer (Pay Slip)."
+      description: "Expense: money spent. Income: money received. Payroll: Wages."
     },
-    vendor: { type: Type.STRING, description: "Vendor name for expenses, Client name for income, or Employer name for payroll documents" },
-    date: { type: Type.STRING, description: "Format: YYYY-MM-DD" },
-    total: { type: Type.NUMBER, description: "Total amount on document. For Payroll, this is the NET pay." },
-    gst: { type: Type.NUMBER, description: "GST amount if applicable." },
+    vendor: { type: Type.STRING },
+    date: { type: Type.STRING, description: "YYYY-MM-DD" },
+    total: { type: Type.NUMBER },
+    gst: { type: Type.NUMBER },
     subtotal: { type: Type.NUMBER },
     items: {
       type: Type.ARRAY,
@@ -67,44 +60,28 @@ const documentSchema = {
           name: { type: Type.STRING },
           price: { type: Type.NUMBER },
           category: { type: Type.STRING },
-          isAsset: { type: Type.BOOLEAN, description: "True if item is a durable tool/equipment over $300" },
-          usefulLife: { type: Type.NUMBER, description: "Expected life in years (e.g. 5 for laptop, 10 for drills)" }
+          isAsset: { type: Type.BOOLEAN },
+          usefulLife: { type: Type.NUMBER }
         }
       }
     },
-    category: { 
-      type: Type.STRING, 
-      description: "Match to most relevant Australian tax category from: Tools & Equipment, Materials, Fuel & Transport, Insurance, Professional Fees, Office & Admin, Subcontractors, Printing & Stationary, Repairs & Maintenance, Uniforms & PPE, Travel, Sales, Services, Wages." 
-    },
-    isAsset: { type: Type.BOOLEAN, description: "True if document represents a tool/equipment over $300 (Depreciable Asset)" },
-    grossAmount: { type: Type.NUMBER, description: "For Payroll: Total pay before tax (Gross)." },
-    taxWithheld: { type: Type.NUMBER, description: "For Payroll/Income: Total tax withheld (PAYG)." },
-    superannuation: { type: Type.NUMBER, description: "For Payroll: Super contribution amount." },
-    ytdGrossAmount: { type: Type.NUMBER, description: "Year-To-Date Gross Income as shown on Payslip." },
-    ytdTaxWithheld: { type: Type.NUMBER, description: "Year-To-Date Tax Withheld as shown on Payslip." },
-    notes: { type: Type.STRING, description: "Any additional details or itemised breakdowns found." },
-    confidence: { type: Type.STRING, enum: ["high", "low"], description: "Use 'low' if document is blurry, cut off, or details are ambiguous." },
-    unclearReason: { type: Type.STRING, description: "Reason why the scan might be inaccurate." }
+    category: { type: Type.STRING },
+    isAsset: { type: Type.BOOLEAN },
+    grossAmount: { type: Type.NUMBER },
+    taxWithheld: { type: Type.NUMBER },
+    superannuation: { type: Type.NUMBER },
+    ytdGrossAmount: { type: Type.NUMBER },
+    ytdTaxWithheld: { type: Type.NUMBER },
+    notes: { type: Type.STRING },
+    confidence: { type: Type.STRING, enum: ["high", "low"] },
+    unclearReason: { type: Type.STRING }
   },
   required: ["documentType", "vendor", "total", "date", "confidence", "category"]
 };
 
 export async function analyzeDocument(base64Image: string, mimeType: string = "image/jpeg"): Promise<DocumentAnalysis | null> {
-  if (!isServer) {
-    const response = await fetch("/api/gemini/analyze", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ base64Image, mimeType })
-    });
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || "AI analysis failed via proxy");
-    }
-    return response.json();
-  }
-
   try {
-    const ai = getAI()!;
+    const ai = getAI();
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview", 
       contents: [
@@ -118,16 +95,9 @@ export async function analyzeDocument(base64Image: string, mimeType: string = "i
             3. For INCOME: Use categories like [Sales, Services, Interest, Other].
             4. For PAYROLL: Use 'Wages' or 'Salary'. Extract Gross Pay, Tax Withheld, AND search for Year-To-Date (YTD) totals for Gross and Tax.
             5. BUNNINGS/RECCIES: If multiple items exist, detect which are 'Tools' (isAsset if >$300) and which are 'Materials' (consumables). For assets, estimate usefulLife in years (e.g. laptop 5y, power tool 10y).
-            6. VENDOR HINTS: 
-               - Bunnings/Total Tools/Sydney Tools -> Tools & Equipment or Materials
-               - BP/Shell/Ampol/Caltex -> Fuel & Transport
-               - Officeworks -> Office & Admin or Printing & Stationary
-               - NRMA/Allianz/GIO -> Insurance
-               - Woolworths/Coles -> Usually Office & Admin (supplies) or Personal (but default to Office if on work site)
-            7. ASSETS: If an item is a durable tool/machine and costs >$300, set isAsset=true inside the items array and for the main document.
-            8. If document is a PAYSLIP (Payroll): Look specifically for "YTD Earnings" or "Total Gross Year to Date" and "YTD Tax".
-            9. CRITICAL: NEVER return an empty object or fail. Even if the image is blurry, extract the LARGEST currency figure found as the 'total' and the most prominent text as the 'vendor'. If you can't find a date, use the current date.
-            10. Set confidence='low' ONLY if you are truly guessing, but still provide your best estimate for all fields.` },
+            6. ASSETS: If an item is a durable tool/machine and costs >$300, set isAsset=true inside the items array and for the main document.
+            7. CRITICAL: NEVER return an empty object or fail. Even if the image is blurry, extract the LARGEST currency figure found as the 'total' and the most prominent text as the 'vendor'. If you can't find a date, use the current date.
+            8. Set confidence='low' ONLY if you are truly guessing, but still provide your best estimate for all fields.` },
             { inlineData: { mimeType, data: base64Image } }
           ]
         }
@@ -138,55 +108,23 @@ export async function analyzeDocument(base64Image: string, mimeType: string = "i
       }
     });
 
-    if (response.text && response.text !== "undefined" && response.text !== "null") {
-      try {
-        return JSON.parse(response.text) as DocumentAnalysis;
-      } catch (e) {
-        console.error("Gemini Analysis Parsing Error:", e, "Response text:", response.text);
-        return null;
-      }
+    const text = response.text;
+    if (text) {
+      return JSON.parse(text) as DocumentAnalysis;
     }
     return null;
   } catch (error) {
     console.error("Gemini Analysis Error:", error);
-    return null;
+    throw error;
   }
 }
 
 export async function suggestCategory(vendor: string, categories: string[]): Promise<string | null> {
-  if (!isServer) {
-    const response = await fetch("/api/gemini/suggest-category", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ vendor, categories })
-    });
-    if (!response.ok) return null;
-    const data = await response.json();
-    return data.category;
-  }
-
   try {
-    const ai = getAI()!;
+    const ai = getAI();
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
-      contents: [
-        {
-          parts: [
-            { text: `You are an Australian tax expert for tradies. 
-            Given the vendor name "${vendor}", suggest the most appropriate category from this list: ${categories.join(", ")}. 
-            
-            HINTS for tradies:
-            - Bunnings, Total Tools, Sydney Tools -> Tools & Equipment or Materials
-            - BP, Shell, Ampol, Caltex, Puma -> Fuel & Transport
-            - Officeworks, Australia Post -> Office & Admin
-            - GIO, Allianz, NRMA, Vero -> Insurance
-            - Telstra, Optus, Aussie Broadband -> Utility (or Office & Admin)
-            - Repco, Supercheap Auto -> Repairs & Maintenance
-            
-            Return ONLY the category name matching the list exactly.` }
-          ]
-        }
-      ],
+      contents: `Suggest the most appropriate tax category for vendor "${vendor}" from list: ${categories.join(", ")}. Return ONLY the category name.`,
       config: {
         responseMimeType: "text/plain",
       }
@@ -204,55 +142,31 @@ export async function suggestCategory(vendor: string, categories: string[]): Pro
 }
 
 export async function chatWithTradie(messages: Array<{ role: 'user' | 'assistant', content: string }>, context: string): Promise<string> {
-  if (!isServer) {
-    const response = await fetch("/api/gemini/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages, context })
-    });
-    if (!response.ok) return "AI connection failed via proxy.";
-    const data = await response.json();
-    return data.response;
-  }
-
   try {
-    const ai = getAI()!;
+    const ai = getAI();
     const history = messages.slice(0, -1).map(m => ({
       role: m.role === 'assistant' ? 'model' : 'user',
       parts: [{ text: m.content }]
     }));
-    const lastMessage = messages[messages.length - 1].content;
-
+    
     const chat = ai.chats.create({
       model: "gemini-3-flash-preview",
       config: {
-        systemInstruction: `You are TradieTax AI assistant, a friendly and expert Australian accounting mentor for sole traders, tradies, and small business owners.
-            
-            Financial Context of the current user:
-            ${context}
-            
-            Formatting rules:
-            1. NEVER use asterisks (*) for any formatting. No bolding with **, no bullet points with *.
-            2. For lists, ALWAYS use bullet points (using a hyphen -). Add an extra empty line between each bullet point so they appear in separate paragraphs. Do NOT use numbers for lists.
-            3. Keep all explanations extremely simple and jargon-free. Explain things like you are talking to a mate at a job site. Use plain English and keep it short.
-            
-            Guidelines:
-            1. ONLY mention the user's total income, profit, or specific financial totals if it is directly relevant to the user's specific question. Do not start every answer with "Based on your income...".
-            2. If asked about a specific category (e.g., "Can I claim fuel?"), focus on the tax rules for that category rather than reciting their balance sheet.
-            3. Use the "Financial Context" to provide specific, data-driven answers only when the user's question relates to their own transactions, GST, km logged, or assets.
-            4. Keep your answers brief and easy to read. Move straight to the point.
-            5. Answer general questions about Australian tax law, accounting principles, and business finance (e.g., "What are my tax obligations as a sole trader?", "How do I calculate GST?", "What can I claim as a business expense?") without necessarily tying it back to their current totals unless requested.
-            6. Maintain a "Tradie-friendly" tone: helpful, professional, and clear.
-            Disclaimers: Advise major decisions to contact a tax agent.`,
+        systemInstruction: `You are TradieTax AI assistant, an expert Australian accounting mentor.
+          Financial Context: ${context}
+          Formatting: NO asterisks (*). Use Hyphens (-) for lists. Extra line between bullets. Short, simple English.`,
       },
-      history: history
+      history: history as any
     });
 
+    const lastMessage = messages[messages.length - 1].content;
     const result = await chat.sendMessage({ message: lastMessage });
     return (result.text || "Sorry, I couldn't process that.").replace(/\*/g, '');
   } catch (error) {
     console.error("Gemini Chat Error:", error);
-    return "I'm having trouble connecting to my brain right now. Please call an ATO representative or check the ATO website for official guidance.";
+    return "I'm having trouble connecting to AI. Please try again later.";
   }
 }
+
+
 
