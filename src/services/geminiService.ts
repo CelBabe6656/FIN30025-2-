@@ -90,7 +90,7 @@ export async function analyzeDocument(base64Image: string, mimeType: string = "i
     const ai = getAI();
     if (!ai) return null;
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview", 
+      model: "gemini-flash-latest", 
       contents: {
         parts: [
           { text: `Analyze this document for an Australian Sole Trader/Tradie with high precision. 
@@ -143,7 +143,7 @@ export async function suggestCategory(vendor: string, categories: string[]): Pro
     const ai = getAI();
     if (!ai) return null;
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-flash-latest",
       contents: `Suggest the most appropriate tax category for vendor "${vendor}" from list: ${categories.join(", ")}. Return ONLY the category name.`,
       config: {
         responseMimeType: "text/plain",
@@ -165,17 +165,20 @@ export async function chatWithTradie(messages: Array<{ role: 'user' | 'assistant
   try {
     const ai = getAI();
     if (!ai) return "AI is currently unavailable. Please check your API key in settings.";
-    const history = messages.slice(0, -1).map(m => ({
+    
+    // Keep internal history manageable
+    const historyLimit = 10;
+    const history = messages.slice(Math.max(0, messages.length - historyLimit - 1), -1).map(m => ({
       role: m.role === 'assistant' ? 'model' : 'user',
       parts: [{ text: m.content }]
     }));
     
     const chat = ai.chats.create({
-      model: "gemini-3-flash-preview",
+      model: "gemini-flash-latest",
       config: {
         systemInstruction: `You are TradieTax AI assistant, an expert Australian accounting mentor.
           Financial Context: ${context}
-          Multilingual Support: Detect the user's language and respond in the SAME language as the user. If they ask in Spanish, answer in Spanish. Use appropriate cultural context for accounting terms.
+          Multilingual Support: Respond in the SAME language as the user. 
           Formatting: NO asterisks (*). Use Hyphens (-) for lists. Extra line between bullets. Short, simple language matching the user's input.`,
       },
       history: history as any

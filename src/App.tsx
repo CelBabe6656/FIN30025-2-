@@ -1662,7 +1662,10 @@ export default function App() {
       setChatMessages(prev => [...prev, { role: 'assistant', content: response }]);
     } catch (err) {
       console.error("Chat error:", err);
-      setChatMessages(prev => [...prev, { role: 'assistant', content: "Sorry, I hit a snag. Try calling an ATO representative." }]);
+      setChatMessages(prev => [...prev, { 
+        role: 'assistant', 
+        content: "I'm having trouble reaching the AI service. Please ensure your GEMINI_API_KEY is correctly configured in your deployment settings." 
+      }]);
     } finally {
       setIsTyping(false);
     }
@@ -3831,7 +3834,7 @@ export default function App() {
                        )}
                      </div>
                      <div className={cn(
-                       "p-4 rounded-3xl shadow-sm max-w-[80%] text-sm",
+                       "p-4 rounded-3xl shadow-sm max-w-[80%] text-sm whitespace-pre-wrap",
                        msg.role === 'assistant' 
                          ? "bg-white border border-stone rounded-tl-none text-coal" 
                          : "bg-sage rounded-tr-none text-white"
