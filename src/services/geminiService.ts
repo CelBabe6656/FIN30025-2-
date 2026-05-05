@@ -90,7 +90,7 @@ export async function analyzeDocument(base64Image: string, mimeType: string = "i
     const ai = getAI();
     if (!ai) return null;
     const response = await ai.models.generateContent({
-      model: "gemini-3.1-flash-lite-preview", 
+      model: "gemini-3-flash-preview", 
       contents: {
         parts: [
           { text: `Analyze this document for an Australian Sole Trader/Tradie with high precision. 
@@ -98,17 +98,18 @@ export async function analyzeDocument(base64Image: string, mimeType: string = "i
           EXTRACTOR RULES:
           1. Detect Document Type: Expense Receipt, Business Income Invoice, or Payroll Pay Slip.
           2. For EXPENSES: Categorise into: [Tools & Equipment, Materials, Fuel & Transport, Insurance, Professional Fees, Office & Admin, Subcontractors, Printing & Stationary, Repairs & Maintenance, Uniforms & PPE, Travel].
-          3. ITEM LEVEL EXTRACTION:
-             - Extract line items from the receipt separately (Limit to the first 10 most relevant items to ensure stability).
+          3. ITEM LEVEL EXTRACTION (CRITICAL):
+             - Extract line items from the receipt separately (Limit to the first 25 most important items).
              - Classify each item accurately and assign a 'source': 
                * 'Business' for equipment, materials, and services used for the Sole Trader business.
                * 'Payroll' for items required for their employment as a worker (PAYG).
                * 'Personal' for items that are clearly not related to any income generation.
              - If an item is a durable tool, machine, or electronic device and costs >= $300, mark isAsset=true and estimate its 'usefulLife' (e.g., Laptop=3-5y, Power Tool=5-10y, Vehicle=8-15y).
+             - Differentiate between 'Materials' (consumables like screws, glue, timber) and 'Tools' (hammers, drills, saw).
           4. For INCOME/PAYROLL: Extract all figures including Gross, Tax Withheld, and YTD totals if present.
           5. ATO COMPLIANCE: Australian tax law requires assets over $300 to be depreciated. Ensure this is flagged properly in the 'items' array.
           6. Fallback: If text is unclear, extract the largest visible total and most prominent vendor name. Default confidence to 'low' if guessing.
-          7. Output ONLY raw JSON based on the schema. No markdown formatting.` },
+          7. Output ONLY raw JSON based on the schema. No markdown formatting or extra text.` },
           { inlineData: { mimeType, data: base64Image } }
         ]
       },
@@ -121,10 +122,12 @@ export async function analyzeDocument(base64Image: string, mimeType: string = "i
     const text = response.text;
     if (text) {
       try {
+        // Robust cleaning in case the model returns markdown despite responseMimeType
         const cleaned = text.replace(/```json\s?|```/g, '').trim();
         return JSON.parse(cleaned) as DocumentAnalysis;
       } catch (parseError) {
-        console.error("JSON Parse Error:", text.substring(0, 100));
+        console.error("JSON Parse Error at content start:", text.substring(0, 100));
+        console.error("JSON Parse Error at content end:", text.substring(text.length - 100));
         throw parseError;
       }
     }
@@ -140,7 +143,7 @@ export async function suggestCategory(vendor: string, categories: string[]): Pro
     const ai = getAI();
     if (!ai) return null;
     const response = await ai.models.generateContent({
-      model: "gemini-3.1-flash-lite-preview",
+      model: "gemini-3-flash-preview",
       contents: `Suggest the most appropriate tax category for vendor "${vendor}" from list: ${categories.join(", ")}. Return ONLY the category name.`,
       config: {
         responseMimeType: "text/plain",
@@ -162,28 +165,28 @@ export async function chatWithTradie(messages: Array<{ role: 'user' | 'assistant
   try {
     const ai = getAI();
     if (!ai) return "AI is currently unavailable. Please check your API key in settings.";
-    
-    const contents = messages.map(m => ({
+    const history = messages.slice(0, -1).map(m => ({
       role: m.role === 'assistant' ? 'model' : 'user',
       parts: [{ text: m.content }]
     }));
-
-    const response = await ai.models.generateContent({
-      model: "gemini-3.1-flash-lite-preview",
-      contents: contents as any,
+    
+    const chat = ai.chats.create({
+      model: "gemini-3-flash-preview",
       config: {
         systemInstruction: `You are TradieTax AI assistant, an expert Australian accounting mentor.
           Financial Context: ${context}
-          Objective: Help Sole Traders and PAYG workers manage their tax.
-          Multilingual Support: Respond in the SAME language as the user.
-          Formatting: NO asterisks (*). Use Hyphens (-) for lists. Short language.`,
-      }
+          Multilingual Support: Detect the user's language and respond in the SAME language as the user. If they ask in Spanish, answer in Spanish. Use appropriate cultural context for accounting terms.
+          Formatting: NO asterisks (*). Use Hyphens (-) for lists. Extra line between bullets. Short, simple language matching the user's input.`,
+      },
+      history: history as any
     });
 
-    return (response.text || "Sorry, I couldn't process that.").replace(/\*/g, '');
+    const lastMessage = messages[messages.length - 1].content;
+    const result = await chat.sendMessage({ message: lastMessage });
+    return (result.text || "Sorry, I couldn't process that.").replace(/\*/g, '');
   } catch (error) {
     console.error("Gemini Chat Error:", error);
-    return "I'm having trouble connecting to TradieTax AI. This usually means the API key is missing or invalid in the deployment settings. Also ensure the model 'gemini-3.1-flash-lite-preview' is available in your region.";
+    return "I'm having trouble connecting to TradieTax AI. This usually means the API key is missing or invalid in the deployment settings. Please check your configuration.";
   }
 }
 
