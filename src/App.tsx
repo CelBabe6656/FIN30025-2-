@@ -98,7 +98,6 @@ interface ReceiptItem {
   isAsset?: boolean;
   usefulLife?: number;
   depreciationRate?: number;
-  source?: 'Business' | 'Payroll' | 'Personal';
 }
 
 interface ReceiptEntry {
@@ -109,7 +108,7 @@ interface ReceiptEntry {
   total: number;
   type: string;
   receiptNumber?: string;
-  source: 'Business' | 'Payroll' | 'Personal';
+  source: 'Business' | 'Payroll';
   businessUsage?: number; // 0-100
   payrollUsage?: number; // 0-100
   personalUsage?: number; // 0-100
@@ -436,16 +435,6 @@ function ReceiptItemEditor({ items, onChange, onTotalChange, categories, isGstRe
                   {categories.map(cat => (
                     <option key={cat}>{cat}</option>
                   ))}
-                </select>
-
-                <select 
-                  className="bg-white border border-stone rounded-lg px-2 py-1 text-[10px] outline-none font-bold"
-                  value={item.source || 'Business'}
-                  onChange={e => updateItem(idx, { source: e.target.value as any })}
-                >
-                  <option value="Business">Business (Sole Trader)</option>
-                  <option value="Payroll">Work (Payroll)</option>
-                  <option value="Personal">Personal</option>
                 </select>
 
                 <div className="flex items-center gap-2">
@@ -1319,38 +1308,6 @@ export default function App() {
     });
   };
 
-  const deleteReceipt = (id: string) => {
-    setReceipts(receipts.filter(r => r.id !== id));
-    showToast('Receipt deleted successfully.', 'info');
-  };
-
-  const handleDeleteIncome = (id?: string) => {
-    const targetId = typeof id === 'string' ? id : editingIncomeId;
-    if (targetId) {
-      setIncomeEntries(prev => prev.filter(i => i.id !== targetId));
-      setShowIncomeModal(false);
-      setEditingIncomeId(null);
-      showToast('Income record deleted.', 'info');
-    }
-  };
-
-  const handleSaveIncome = () => {
-    if (editingIncomeId) {
-      setIncomeEntries(incomeEntries.map(i => i.id === editingIncomeId ? { ...newIncome, id: editingIncomeId } as IncomeEntry : i));
-      setEditingIncomeId(null);
-      showToast('Income record updated.');
-    } else {
-      const entry: IncomeEntry = {
-        ...newIncome,
-        id: Math.random().toString(36).substr(2, 9)
-      } as IncomeEntry;
-      setIncomeEntries([...incomeEntries, entry]);
-      showToast('Income record added.');
-    }
-    setShowIncomeModal(false);
-    setNewIncome({ description: '', amount: 0, date: new Date().toISOString().split('T')[0], source: 'Business', documentType: 'Invoice' });
-  };
-
   const handleScanDocument = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -1372,8 +1329,8 @@ export default function App() {
           processScanData(data);
         }
       } else {
-        // AI is unreachable or failed to parse - ALWAYS provide manual entry
-        const fallback: DocumentAnalysis = {
+        // Create a fallback "Manual Review" record so the user doesn't lose the flow
+        const fallback: any = {
           documentType: 'Expense',
           vendor: 'Manual Review Needed',
           date: new Date().toISOString().split('T')[0],
@@ -1381,11 +1338,11 @@ export default function App() {
           category: 'Other',
           isAsset: false,
           confidence: 'low',
-          unclearReason: 'AI unavailable or image unclear. Please fill details manually.'
+          unclearReason: 'Scan unclear. Please fill details manually.'
         };
         setPendingScanData(fallback);
         setShowScanWarning(true);
-        showToast('Scanning in Manual Mode. Please check details.', 'info');
+        showToast('Document captured, but needs some manual filling.', 'info');
       }
     } catch (error) {
       console.error("Scan error:", error);
@@ -1429,8 +1386,7 @@ export default function App() {
           gstApplies: true,
           isAsset: item.isAsset || item.price >= 300,
           usefulLife: item.usefulLife || 10,
-          depreciationRate: 100 / (item.usefulLife || 10),
-          source: (item as any).source || 'Business'
+          depreciationRate: 100 / (item.usefulLife || 10)
         })),
         isAsset: data.isAsset || (data.items || []).some(i => i.isAsset) || data.total >= 300,
         gstApplies: true,
@@ -1723,6 +1679,11 @@ export default function App() {
     });
     setEditingIncomeId(entry.id);
     setShowIncomeModal(true);
+  };
+
+  const handleDeleteIncome = (id: string) => {
+    setIncomeEntries(prev => prev.filter(e => e.id !== id));
+    showToast('Record deleted');
   };
 
   const handleShareWithAgent = async () => {
@@ -2494,29 +2455,9 @@ export default function App() {
                                      style={{ width: `${newReceipt.personalUsage || 0}%` }}
                                     />
                                  </div>
-                                 </div>
-                               </div>
-                               <div className="pt-3 border-t border-earth/10">
-                                 <p className="text-[9px] font-bold text-earth/40 uppercase mb-2 text-center">Split Presets</p>
-                                 <div className="flex flex-wrap justify-center gap-2">
-                                   {[
-                                     { l: 'Business (80%)', b: 80, w: 0 },
-                                     { l: 'Business (90%)', b: 90, w: 0 },
-                                     { l: 'Work (100%)', b: 0, w: 100 },
-                                     { l: '50/50 Split', b: 50, w: 50 }
-                                   ].map(p => (
-                                     <button 
-                                       key={p.l}
-                                       type="button"
-                                       onClick={() => setNewReceipt({...newReceipt, businessUsage: p.b, payrollUsage: p.w, personalUsage: 100 - p.b - p.w})}
-                                       className="text-[9px] font-bold px-2 py-1 bg-white border border-stone/50 rounded-lg hover:border-sage transition-all"
-                                     >
-                                       {p.l}
-                                     </button>
-                                   ))}
-                                 </div>
                                </div>
                              </div>
+                           </div>
                          )}
                          {(!newReceipt.items || newReceipt.items.length === 0) && (
                            <div className="col-span-2 mt-2">
@@ -2540,26 +2481,7 @@ export default function App() {
                         <div className="pt-4 border-t border-stone/30">
                            <ReceiptItemEditor 
                              items={newReceipt.items || []}
-                             onChange={(items) => {
-                                const newTotal = items.reduce((s,i) => s + i.price, 0);
-                                const anyAsset = items.some(i => i.price >= 300);
-                                const bizTotal = items.filter(i => (i.source || 'Business') === 'Business').reduce((s,i) => s + i.price, 0);
-                                const payTotal = items.filter(i => i.source === 'Payroll').reduce((s,i) => s + i.price, 0);
-                                const bizPct = Math.round((bizTotal / (newTotal || 1)) * 100);
-                                const payPct = Math.round((payTotal / (newTotal || 1)) * 100);
-                                const persPct = 100 - bizPct - payPct;
-                                setNewReceipt({ 
-                                  ...newReceipt, 
-                                  items,
-                                  total: newTotal,
-                                  isAsset: anyAsset || newTotal >= 300,
-                                  type: items.length > 1 ? 'Personal Apportionment' : newReceipt.type,
-                                  businessUsage: bizPct,
-                                  payrollUsage: payPct,
-                                  personalUsage: persPct
-                                });
-                              }}
-
+                             onChange={(items) => setNewReceipt({ ...newReceipt, items })}
                              categories={categories}
                              isGstRegistered={isGstRegistered}
                              onTotalChange={(total) => setNewReceipt({ 
@@ -2819,31 +2741,7 @@ export default function App() {
                   className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl space-y-6"
                   onClick={e => e.stopPropagation()}
                 >
-                  <div className="flex justify-between items-center bg-sand/30 -mx-8 -mt-8 p-6 mb-4 border-b border-sand">
-                    <div className="flex items-center gap-3">
-                      <div className="bg-sage text-white p-2 rounded-xl">
-                        <Receipt size={18} />
-                      </div>
-                      <h3 className="font-serif italic text-xl text-sage">Receipt Data</h3>
-                    </div>
-                    <div className="flex items-center gap-2">
-                       <button 
-                        onClick={() => {
-                          if (confirm('Delete this receipt entry?')) {
-                            deleteReceipt(selectedReceipt.id);
-                            setSelectedReceipt(null);
-                          }
-                        }}
-                        className="p-2 text-red-500 hover:bg-red-50 rounded-xl transition-colors"
-                      >
-                        <Trash2 size={18} />
-                      </button>
-                      <button onClick={() => setSelectedReceipt(null)} className="p-2 hover:bg-black/5 rounded-full transition-colors">
-                        <Plus className="rotate-45 text-earth" />
-                      </button>
-                    </div>
-                  </div>
-                  <div className="space-y-4 max-h-[60vh] overflow-y-auto px-1">
+                  <div className="space-y-4">
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-1">
                         <label className="text-[10px] uppercase font-bold text-earth px-1">Vendor</label>
@@ -3292,16 +3190,6 @@ export default function App() {
                animate={{ opacity: 1, y: 0 }}
                className="space-y-6"
             >
-              {showIncomeModal && (
-                <IncomeModal 
-                  onClose={() => setShowIncomeModal(false)}
-                  onSave={handleSaveIncome}
-                  newIncome={newIncome}
-                  setNewIncome={setNewIncome}
-                  isEditing={!!editingIncomeId}
-                  onDelete={handleDeleteIncome}
-                />
-              )}
               <div className="bg-white rounded-3xl p-6 border border-stone shadow-sm">
                 <div className="flex flex-col md:flex-row justify-between items-center gap-6">
                   <div className="flex items-center gap-4">
@@ -3375,18 +3263,6 @@ export default function App() {
                                 className="p-2 rounded-lg hover:bg-sand text-sage opacity-0 group-hover:opacity-100 transition-opacity"
                               >
                                 <Settings size={14} />
-                              </button>
-                              <button 
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  if (confirm('Delete this income record?')) {
-                                    setIncomeEntries(prev => prev.filter(i => i.id !== inc.id));
-                                    showToast('Income record deleted.', 'info');
-                                  }
-                                }}
-                                className="p-2 rounded-lg hover:bg-red-50 text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
-                              >
-                                <Trash2 size={14} />
                               </button>
                               <div>
                                 <p className="font-bold text-coal">{inc.description || inc.source}</p>
@@ -4472,16 +4348,15 @@ function QuickActionCard({ icon, label, description, onClick }: { icon: ReactNod
 }
 
 interface ReceiptRowProps {
+  key?: string | number;
   receipt: ReceiptEntry;
   onUpdate: (r: ReceiptEntry) => void;
-  onDelete?: (id: string) => void;
   onClick: () => void;
   categories: string[];
   isGstRegistered: boolean;
-  key?: string | number;
 }
 
-function ReceiptRow({ receipt, onUpdate, onDelete, onClick, categories, isGstRegistered }: ReceiptRowProps) {
+function ReceiptRow({ receipt, onUpdate, onClick, categories, isGstRegistered }: ReceiptRowProps) {
   const [isExpanded, setIsExpanded] = useState(false);
 
   const calculateGST = (r: ReceiptEntry) => {
@@ -4533,29 +4408,16 @@ function ReceiptRow({ receipt, onUpdate, onDelete, onClick, categories, isGstReg
         </div>
         <span className="w-1/4 text-earth truncate">{receipt.category}</span>
         <span className="w-1/4 text-earth/60 text-xs">{receipt.date}</span>
-        <div className="text-right flex items-center gap-3 shrink-0">
-          <div className="flex flex-col items-end">
-            <span className="font-bold font-mono text-coal">${receipt.total.toFixed(2)}</span>
-            {isGstRegistered && (
-              <div className="flex flex-col items-end">
-                <span className="text-[9px] text-earth font-bold opacity-60">GST: ${calculateGST(receipt).toFixed(2)}</span>
-                {receipt.type === 'Personal Apportionment' && (
-                  <span className="text-[8px] text-sage font-bold">Claimable: ${(calculateGST(receipt) * (receipt.businessUsage || 50) / 100).toFixed(2)}</span>
-                )}
-              </div>
-            )}
-          </div>
-          <button 
-            onClick={(e) => {
-              e.stopPropagation();
-              if (confirm('Delete this receipt?')) {
-                onDelete(receipt.id);
-              }
-            }}
-            className="p-2 text-earth/20 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
-          >
-            <Trash2 size={16} />
-          </button>
+        <div className="text-right flex flex-col items-end shrink-0">
+          <span className="font-bold font-mono text-coal">${receipt.total.toFixed(2)}</span>
+          {isGstRegistered && (
+            <div className="flex flex-col items-end">
+              <span className="text-[9px] text-earth font-bold opacity-60">GST: ${calculateGST(receipt).toFixed(2)}</span>
+              {receipt.type === 'Personal Apportionment' && (
+                <span className="text-[8px] text-sage font-bold">Claimable: ${(calculateGST(receipt) * (receipt.businessUsage || 50) / 100).toFixed(2)}</span>
+              )}
+            </div>
+          )}
         </div>
       </div>
       
@@ -4705,25 +4567,7 @@ function ReceiptRow({ receipt, onUpdate, onDelete, onClick, categories, isGstReg
                 onChange={(items) => {
                   const newTotal = items.reduce((s,i) => s + i.price, 0);
                   const anyAsset = items.some(i => i.price >= 300);
-                  
-                  // Calculate apportionment from item-level sources for accuracy
-                  const bizTotal = items.filter(i => (i.source || 'Business') === 'Business').reduce((s,i) => s + i.price, 0);
-                  const payTotal = items.filter(i => i.source === 'Payroll').reduce((s,i) => s + i.price, 0);
-                  
-                  const bizPct = Math.round((bizTotal / (newTotal || 1)) * 100);
-                  const payPct = Math.round((payTotal / (newTotal || 1)) * 100);
-                  const persPct = 100 - bizPct - payPct;
-
-                  onUpdate({ 
-                    ...receipt, 
-                    items, 
-                    total: newTotal, 
-                    isAsset: anyAsset || newTotal >= 300,
-                    type: items.length > 1 ? 'Personal Apportionment' : receipt.type,
-                    businessUsage: bizPct,
-                    payrollUsage: payPct,
-                    personalUsage: persPct
-                  });
+                  onUpdate({ ...receipt, items, total: newTotal, isAsset: anyAsset || newTotal >= 300 });
                 }}
                 onTotalChange={(total) => {
                   const anyAsset = (receipt.items || []).some(i => i.price >= 300);
