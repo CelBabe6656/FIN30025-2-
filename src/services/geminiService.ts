@@ -3,11 +3,12 @@ import { GoogleGenAI, Type } from "@google/genai";
 let genAI: GoogleGenAI | null = null;
 
 function getAI() {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    console.warn("GEMINI_API_KEY is not defined. AI features will be disabled.");
+    return null;
+  }
   if (!genAI) {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      throw new Error("GEMINI_API_KEY is not defined.");
-    }
     genAI = new GoogleGenAI({ apiKey: apiKey.trim() });
   }
   return genAI;
@@ -60,6 +61,11 @@ const documentSchema = {
           name: { type: Type.STRING },
           price: { type: Type.NUMBER },
           category: { type: Type.STRING },
+          source: { 
+            type: Type.STRING, 
+            enum: ["Business", "Payroll", "Personal"],
+            description: "Business (Sole Trader), Payroll (Work/Employee), or Personal."
+          },
           isAsset: { type: Type.BOOLEAN },
           usefulLife: { type: Type.NUMBER }
         }
@@ -82,28 +88,30 @@ const documentSchema = {
 export async function analyzeDocument(base64Image: string, mimeType: string = "image/jpeg"): Promise<DocumentAnalysis | null> {
   try {
     const ai = getAI();
+    if (!ai) return null;
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview", 
-      contents: [
-        {
-          parts: [
-            { text: `Analyze this document for an Australian Sole Trader/Tradie with high precision. 
-            
-            EXTRACTOR RULES:
-            1. Detect Document Type: Expense Receipt, Business Income Invoice, or Payroll Pay Slip.
-            2. For EXPENSES: Categorise into: [Tools & Equipment, Materials, Fuel & Transport, Insurance, Professional Fees, Office & Admin, Subcontractors, Printing & Stationary, Repairs & Maintenance, Uniforms & PPE, Travel].
-            3. ITEM LEVEL EXTRACTION (CRITICAL):
-               - Extract EVERY line item from the receipt separately.
-               - Classify each item accurately. 
-               - If an item is a durable tool, machine, or electronic device and costs >= $300, mark isAsset=true and estimate its 'usefulLife' (e.g., Laptop=3-5y, Power Tool=5-10y, Vehicle=8-15y).
-               - Differentiate between 'Materials' (consumables like screws, glue, timber) and 'Tools' (hammers, drills, saw).
-            4. For INCOME/PAYROLL: Extract all figures including Gross, Tax Withheld, and YTD totals if present.
-            5. ATO COMPLIANCE: Australian tax law requires assets over $300 to be depreciated. Ensure this is flagged properly in the 'items' array.
-            6. Fallback: If text is unclear, extract the largest visible total and most prominent vendor name. Default confidence to 'low' if guessing.` },
-            { inlineData: { mimeType, data: base64Image } }
-          ]
-        }
-      ],
+      contents: {
+        parts: [
+          { text: `Analyze this document for an Australian Sole Trader/Tradie with high precision. 
+          
+          EXTRACTOR RULES:
+          1. Detect Document Type: Expense Receipt, Business Income Invoice, or Payroll Pay Slip.
+          2. For EXPENSES: Categorise into: [Tools & Equipment, Materials, Fuel & Transport, Insurance, Professional Fees, Office & Admin, Subcontractors, Printing & Stationary, Repairs & Maintenance, Uniforms & PPE, Travel].
+          3. ITEM LEVEL EXTRACTION (CRITICAL):
+             - Extract EVERY line item from the receipt separately.
+             - Classify each item accurately and assign a 'source': 
+               * 'Business' for equipment, materials, and services used for the Sole Trader business.
+               * 'Payroll' for items required for their employment as a worker (PAYG).
+               * 'Personal' for items that are clearly not related to any income generation.
+             - If an item is a durable tool, machine, or electronic device and costs >= $300, mark isAsset=true and estimate its 'usefulLife' (e.g., Laptop=3-5y, Power Tool=5-10y, Vehicle=8-15y).
+             - Differentiate between 'Materials' (consumables like screws, glue, timber) and 'Tools' (hammers, drills, saw).
+          4. For INCOME/PAYROLL: Extract all figures including Gross, Tax Withheld, and YTD totals if present.
+          5. ATO COMPLIANCE: Australian tax law requires assets over $300 to be depreciated. Ensure this is flagged properly in the 'items' array.
+          6. Fallback: If text is unclear, extract the largest visible total and most prominent vendor name. Default confidence to 'low' if guessing.` },
+          { inlineData: { mimeType, data: base64Image } }
+        ]
+      },
       config: {
         responseMimeType: "application/json",
         responseSchema: documentSchema
@@ -124,6 +132,7 @@ export async function analyzeDocument(base64Image: string, mimeType: string = "i
 export async function suggestCategory(vendor: string, categories: string[]): Promise<string | null> {
   try {
     const ai = getAI();
+    if (!ai) return null;
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: `Suggest the most appropriate tax category for vendor "${vendor}" from list: ${categories.join(", ")}. Return ONLY the category name.`,
@@ -146,6 +155,7 @@ export async function suggestCategory(vendor: string, categories: string[]): Pro
 export async function chatWithTradie(messages: Array<{ role: 'user' | 'assistant', content: string }>, context: string): Promise<string> {
   try {
     const ai = getAI();
+    if (!ai) return "AI is currently unavailable. Please check your API key in settings.";
     const history = messages.slice(0, -1).map(m => ({
       role: m.role === 'assistant' ? 'model' : 'user',
       parts: [{ text: m.content }]
@@ -156,7 +166,8 @@ export async function chatWithTradie(messages: Array<{ role: 'user' | 'assistant
       config: {
         systemInstruction: `You are TradieTax AI assistant, an expert Australian accounting mentor.
           Financial Context: ${context}
-          Formatting: NO asterisks (*). Use Hyphens (-) for lists. Extra line between bullets. Short, simple English.`,
+          Multilingual Support: Detect the user's language and respond in the SAME language as the user. If they ask in Spanish, answer in Spanish. Use appropriate cultural context for accounting terms.
+          Formatting: NO asterisks (*). Use Hyphens (-) for lists. Extra line between bullets. Short, simple language matching the user's input.`,
       },
       history: history as any
     });
@@ -166,7 +177,7 @@ export async function chatWithTradie(messages: Array<{ role: 'user' | 'assistant
     return (result.text || "Sorry, I couldn't process that.").replace(/\*/g, '');
   } catch (error) {
     console.error("Gemini Chat Error:", error);
-    return "I'm having trouble connecting to AI. Please try again later.";
+    return "I'm having trouble connecting to TradieTax AI. This usually means the API key is missing or invalid in the deployment settings. Please check your configuration.";
   }
 }
 
