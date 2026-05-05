@@ -1319,6 +1319,38 @@ export default function App() {
     });
   };
 
+  const deleteReceipt = (id: string) => {
+    setReceipts(receipts.filter(r => r.id !== id));
+    showToast('Receipt deleted successfully.', 'info');
+  };
+
+  const handleDeleteIncome = (id?: string) => {
+    const targetId = typeof id === 'string' ? id : editingIncomeId;
+    if (targetId) {
+      setIncomeEntries(prev => prev.filter(i => i.id !== targetId));
+      setShowIncomeModal(false);
+      setEditingIncomeId(null);
+      showToast('Income record deleted.', 'info');
+    }
+  };
+
+  const handleSaveIncome = () => {
+    if (editingIncomeId) {
+      setIncomeEntries(incomeEntries.map(i => i.id === editingIncomeId ? { ...newIncome, id: editingIncomeId } as IncomeEntry : i));
+      setEditingIncomeId(null);
+      showToast('Income record updated.');
+    } else {
+      const entry: IncomeEntry = {
+        ...newIncome,
+        id: Math.random().toString(36).substr(2, 9)
+      } as IncomeEntry;
+      setIncomeEntries([...incomeEntries, entry]);
+      showToast('Income record added.');
+    }
+    setShowIncomeModal(false);
+    setNewIncome({ description: '', amount: 0, date: new Date().toISOString().split('T')[0], source: 'Business', documentType: 'Invoice' });
+  };
+
   const handleScanDocument = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -1340,8 +1372,8 @@ export default function App() {
           processScanData(data);
         }
       } else {
-        // Create a fallback "Manual Review" record so the user doesn't lose the flow
-        const fallback: any = {
+        // AI is unreachable or failed to parse - ALWAYS provide manual entry
+        const fallback: DocumentAnalysis = {
           documentType: 'Expense',
           vendor: 'Manual Review Needed',
           date: new Date().toISOString().split('T')[0],
@@ -1349,11 +1381,11 @@ export default function App() {
           category: 'Other',
           isAsset: false,
           confidence: 'low',
-          unclearReason: 'Scan unclear. Please fill details manually.'
+          unclearReason: 'AI unavailable or image unclear. Please fill details manually.'
         };
         setPendingScanData(fallback);
         setShowScanWarning(true);
-        showToast('Document captured, but needs some manual filling.', 'info');
+        showToast('Scanning in Manual Mode. Please check details.', 'info');
       }
     } catch (error) {
       console.error("Scan error:", error);
@@ -1691,11 +1723,6 @@ export default function App() {
     });
     setEditingIncomeId(entry.id);
     setShowIncomeModal(true);
-  };
-
-  const handleDeleteIncome = (id: string) => {
-    setIncomeEntries(prev => prev.filter(e => e.id !== id));
-    showToast('Record deleted');
   };
 
   const handleShareWithAgent = async () => {
@@ -2792,7 +2819,31 @@ export default function App() {
                   className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl space-y-6"
                   onClick={e => e.stopPropagation()}
                 >
-                  <div className="space-y-4">
+                  <div className="flex justify-between items-center bg-sand/30 -mx-8 -mt-8 p-6 mb-4 border-b border-sand">
+                    <div className="flex items-center gap-3">
+                      <div className="bg-sage text-white p-2 rounded-xl">
+                        <Receipt size={18} />
+                      </div>
+                      <h3 className="font-serif italic text-xl text-sage">Receipt Data</h3>
+                    </div>
+                    <div className="flex items-center gap-2">
+                       <button 
+                        onClick={() => {
+                          if (confirm('Delete this receipt entry?')) {
+                            deleteReceipt(selectedReceipt.id);
+                            setSelectedReceipt(null);
+                          }
+                        }}
+                        className="p-2 text-red-500 hover:bg-red-50 rounded-xl transition-colors"
+                      >
+                        <Trash2 size={18} />
+                      </button>
+                      <button onClick={() => setSelectedReceipt(null)} className="p-2 hover:bg-black/5 rounded-full transition-colors">
+                        <Plus className="rotate-45 text-earth" />
+                      </button>
+                    </div>
+                  </div>
+                  <div className="space-y-4 max-h-[60vh] overflow-y-auto px-1">
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-1">
                         <label className="text-[10px] uppercase font-bold text-earth px-1">Vendor</label>
@@ -3241,6 +3292,16 @@ export default function App() {
                animate={{ opacity: 1, y: 0 }}
                className="space-y-6"
             >
+              {showIncomeModal && (
+                <IncomeModal 
+                  onClose={() => setShowIncomeModal(false)}
+                  onSave={handleSaveIncome}
+                  newIncome={newIncome}
+                  setNewIncome={setNewIncome}
+                  isEditing={!!editingIncomeId}
+                  onDelete={handleDeleteIncome}
+                />
+              )}
               <div className="bg-white rounded-3xl p-6 border border-stone shadow-sm">
                 <div className="flex flex-col md:flex-row justify-between items-center gap-6">
                   <div className="flex items-center gap-4">
@@ -3314,6 +3375,18 @@ export default function App() {
                                 className="p-2 rounded-lg hover:bg-sand text-sage opacity-0 group-hover:opacity-100 transition-opacity"
                               >
                                 <Settings size={14} />
+                              </button>
+                              <button 
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (confirm('Delete this income record?')) {
+                                    setIncomeEntries(prev => prev.filter(i => i.id !== inc.id));
+                                    showToast('Income record deleted.', 'info');
+                                  }
+                                }}
+                                className="p-2 rounded-lg hover:bg-red-50 text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                              >
+                                <Trash2 size={14} />
                               </button>
                               <div>
                                 <p className="font-bold text-coal">{inc.description || inc.source}</p>
@@ -4399,15 +4472,16 @@ function QuickActionCard({ icon, label, description, onClick }: { icon: ReactNod
 }
 
 interface ReceiptRowProps {
-  key?: string | number;
   receipt: ReceiptEntry;
   onUpdate: (r: ReceiptEntry) => void;
+  onDelete?: (id: string) => void;
   onClick: () => void;
   categories: string[];
   isGstRegistered: boolean;
+  key?: string | number;
 }
 
-function ReceiptRow({ receipt, onUpdate, onClick, categories, isGstRegistered }: ReceiptRowProps) {
+function ReceiptRow({ receipt, onUpdate, onDelete, onClick, categories, isGstRegistered }: ReceiptRowProps) {
   const [isExpanded, setIsExpanded] = useState(false);
 
   const calculateGST = (r: ReceiptEntry) => {
@@ -4459,16 +4533,29 @@ function ReceiptRow({ receipt, onUpdate, onClick, categories, isGstRegistered }:
         </div>
         <span className="w-1/4 text-earth truncate">{receipt.category}</span>
         <span className="w-1/4 text-earth/60 text-xs">{receipt.date}</span>
-        <div className="text-right flex flex-col items-end shrink-0">
-          <span className="font-bold font-mono text-coal">${receipt.total.toFixed(2)}</span>
-          {isGstRegistered && (
-            <div className="flex flex-col items-end">
-              <span className="text-[9px] text-earth font-bold opacity-60">GST: ${calculateGST(receipt).toFixed(2)}</span>
-              {receipt.type === 'Personal Apportionment' && (
-                <span className="text-[8px] text-sage font-bold">Claimable: ${(calculateGST(receipt) * (receipt.businessUsage || 50) / 100).toFixed(2)}</span>
-              )}
-            </div>
-          )}
+        <div className="text-right flex items-center gap-3 shrink-0">
+          <div className="flex flex-col items-end">
+            <span className="font-bold font-mono text-coal">${receipt.total.toFixed(2)}</span>
+            {isGstRegistered && (
+              <div className="flex flex-col items-end">
+                <span className="text-[9px] text-earth font-bold opacity-60">GST: ${calculateGST(receipt).toFixed(2)}</span>
+                {receipt.type === 'Personal Apportionment' && (
+                  <span className="text-[8px] text-sage font-bold">Claimable: ${(calculateGST(receipt) * (receipt.businessUsage || 50) / 100).toFixed(2)}</span>
+                )}
+              </div>
+            )}
+          </div>
+          <button 
+            onClick={(e) => {
+              e.stopPropagation();
+              if (confirm('Delete this receipt?')) {
+                onDelete(receipt.id);
+              }
+            }}
+            className="p-2 text-earth/20 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
+          >
+            <Trash2 size={16} />
+          </button>
         </div>
       </div>
       

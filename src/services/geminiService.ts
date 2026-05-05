@@ -3,11 +3,12 @@ import { GoogleGenAI, Type } from "@google/genai";
 let genAI: GoogleGenAI | null = null;
 
 function getAI() {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    console.warn("GEMINI_API_KEY is not defined. AI features will be disabled.");
+    return null;
+  }
   if (!genAI) {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      throw new Error("GEMINI_API_KEY is not defined.");
-    }
     genAI = new GoogleGenAI({ apiKey: apiKey.trim() });
   }
   return genAI;
@@ -87,6 +88,7 @@ const documentSchema = {
 export async function analyzeDocument(base64Image: string, mimeType: string = "image/jpeg"): Promise<DocumentAnalysis | null> {
   try {
     const ai = getAI();
+    if (!ai) return null;
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview", 
       contents: [
@@ -132,6 +134,7 @@ export async function analyzeDocument(base64Image: string, mimeType: string = "i
 export async function suggestCategory(vendor: string, categories: string[]): Promise<string | null> {
   try {
     const ai = getAI();
+    if (!ai) return null;
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: `Suggest the most appropriate tax category for vendor "${vendor}" from list: ${categories.join(", ")}. Return ONLY the category name.`,
@@ -154,6 +157,7 @@ export async function suggestCategory(vendor: string, categories: string[]): Pro
 export async function chatWithTradie(messages: Array<{ role: 'user' | 'assistant', content: string }>, context: string): Promise<string> {
   try {
     const ai = getAI();
+    if (!ai) return "AI is currently unavailable. Please check your API key in settings.";
     const history = messages.slice(0, -1).map(m => ({
       role: m.role === 'assistant' ? 'model' : 'user',
       parts: [{ text: m.content }]
@@ -175,7 +179,7 @@ export async function chatWithTradie(messages: Array<{ role: 'user' | 'assistant
     return (result.text || "Sorry, I couldn't process that.").replace(/\*/g, '');
   } catch (error) {
     console.error("Gemini Chat Error:", error);
-    return "I'm having trouble connecting to AI. Please try again later.";
+    return "I'm having trouble connecting to TradieTax AI. This usually means the API key is missing or invalid in the deployment settings. Please check your configuration.";
   }
 }
 
