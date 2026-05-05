@@ -98,6 +98,7 @@ interface ReceiptItem {
   isAsset?: boolean;
   usefulLife?: number;
   depreciationRate?: number;
+  source?: 'Business' | 'Payroll' | 'Personal';
 }
 
 interface ReceiptEntry {
@@ -108,7 +109,7 @@ interface ReceiptEntry {
   total: number;
   type: string;
   receiptNumber?: string;
-  source: 'Business' | 'Payroll';
+  source: 'Business' | 'Payroll' | 'Personal';
   businessUsage?: number; // 0-100
   payrollUsage?: number; // 0-100
   personalUsage?: number; // 0-100
@@ -435,6 +436,16 @@ function ReceiptItemEditor({ items, onChange, onTotalChange, categories, isGstRe
                   {categories.map(cat => (
                     <option key={cat}>{cat}</option>
                   ))}
+                </select>
+
+                <select 
+                  className="bg-white border border-stone rounded-lg px-2 py-1 text-[10px] outline-none font-bold"
+                  value={item.source || 'Business'}
+                  onChange={e => updateItem(idx, { source: e.target.value as any })}
+                >
+                  <option value="Business">Business (Sole Trader)</option>
+                  <option value="Payroll">Work (Payroll)</option>
+                  <option value="Personal">Personal</option>
                 </select>
 
                 <div className="flex items-center gap-2">
@@ -1308,7 +1319,7 @@ export default function App() {
     });
   };
 
-  const handleScanReceipt = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleScanDocument = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     
@@ -1318,7 +1329,7 @@ export default function App() {
       showToast('Reading file...', 'info');
       const { base64, mimeType } = await processFile(file);
       
-      showToast('Capturing receipt...', 'info');
+      showToast('Analyzing document...', 'info');
       const data = await analyzeDocument(base64, mimeType);
       
       if (data) {
@@ -1329,7 +1340,7 @@ export default function App() {
           processScanData(data);
         }
       } else {
-        // Create a fallback "Manual Review" receipt so the user doesn't lose the flow
+        // Create a fallback "Manual Review" record so the user doesn't lose the flow
         const fallback: any = {
           documentType: 'Expense',
           vendor: 'Manual Review Needed',
@@ -1342,7 +1353,7 @@ export default function App() {
         };
         setPendingScanData(fallback);
         setShowScanWarning(true);
-        showToast('Receipt captured, but needs some manual filling.', 'info');
+        showToast('Document captured, but needs some manual filling.', 'info');
       }
     } catch (error) {
       console.error("Scan error:", error);
@@ -1386,7 +1397,8 @@ export default function App() {
           gstApplies: true,
           isAsset: item.isAsset || item.price >= 300,
           usefulLife: item.usefulLife || 10,
-          depreciationRate: 100 / (item.usefulLife || 10)
+          depreciationRate: 100 / (item.usefulLife || 10),
+          source: (item as any).source || 'Business'
         })),
         isAsset: data.isAsset || (data.items || []).some(i => i.isAsset) || data.total >= 300,
         gstApplies: true,
@@ -2190,7 +2202,7 @@ export default function App() {
                         accept="image/*,.pdf" 
                         capture="camera" 
                         className="hidden" 
-                        onChange={handleScanReceipt}
+                        onChange={handleScanDocument}
                       />
                    </label>
                  </div>
@@ -2455,9 +2467,29 @@ export default function App() {
                                      style={{ width: `${newReceipt.personalUsage || 0}%` }}
                                     />
                                  </div>
+                                 </div>
+                               </div>
+                               <div className="pt-3 border-t border-earth/10">
+                                 <p className="text-[9px] font-bold text-earth/40 uppercase mb-2 text-center">Split Presets</p>
+                                 <div className="flex flex-wrap justify-center gap-2">
+                                   {[
+                                     { l: 'Business (80%)', b: 80, w: 0 },
+                                     { l: 'Business (90%)', b: 90, w: 0 },
+                                     { l: 'Work (100%)', b: 0, w: 100 },
+                                     { l: '50/50 Split', b: 50, w: 50 }
+                                   ].map(p => (
+                                     <button 
+                                       key={p.l}
+                                       type="button"
+                                       onClick={() => setNewReceipt({...newReceipt, businessUsage: p.b, payrollUsage: p.w, personalUsage: 100 - p.b - p.w})}
+                                       className="text-[9px] font-bold px-2 py-1 bg-white border border-stone/50 rounded-lg hover:border-sage transition-all"
+                                     >
+                                       {p.l}
+                                     </button>
+                                   ))}
+                                 </div>
                                </div>
                              </div>
-                           </div>
                          )}
                          {(!newReceipt.items || newReceipt.items.length === 0) && (
                            <div className="col-span-2 mt-2">
@@ -2481,7 +2513,26 @@ export default function App() {
                         <div className="pt-4 border-t border-stone/30">
                            <ReceiptItemEditor 
                              items={newReceipt.items || []}
-                             onChange={(items) => setNewReceipt({ ...newReceipt, items })}
+                             onChange={(items) => {
+                                const newTotal = items.reduce((s,i) => s + i.price, 0);
+                                const anyAsset = items.some(i => i.price >= 300);
+                                const bizTotal = items.filter(i => (i.source || 'Business') === 'Business').reduce((s,i) => s + i.price, 0);
+                                const payTotal = items.filter(i => i.source === 'Payroll').reduce((s,i) => s + i.price, 0);
+                                const bizPct = Math.round((bizTotal / (newTotal || 1)) * 100);
+                                const payPct = Math.round((payTotal / (newTotal || 1)) * 100);
+                                const persPct = 100 - bizPct - payPct;
+                                setNewReceipt({ 
+                                  ...newReceipt, 
+                                  items,
+                                  total: newTotal,
+                                  isAsset: anyAsset || newTotal >= 300,
+                                  type: items.length > 1 ? 'Personal Apportionment' : newReceipt.type,
+                                  businessUsage: bizPct,
+                                  payrollUsage: payPct,
+                                  personalUsage: persPct
+                                });
+                              }}
+
                              categories={categories}
                              isGstRegistered={isGstRegistered}
                              onTotalChange={(total) => setNewReceipt({ 
@@ -3190,26 +3241,53 @@ export default function App() {
                animate={{ opacity: 1, y: 0 }}
                className="space-y-6"
             >
-              <div className="flex justify-between items-center bg-white p-6 rounded-3xl border border-stone">
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 bg-cream rounded-2xl flex items-center justify-center border border-sand">
-                    <Banknote className="text-sage" size={24} />
+              <div className="bg-white rounded-3xl p-6 border border-stone shadow-sm">
+                <div className="flex flex-col md:flex-row justify-between items-center gap-6">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 bg-cream rounded-2xl flex items-center justify-center border border-sand">
+                      <Banknote className="text-sage" size={24} />
+                    </div>
+                    <div>
+                      <h3 className="font-serif text-lg text-sage">Income Ledger</h3>
+                      <p className="text-[10px] text-earth uppercase tracking-widest font-bold opacity-60">
+                        FY26 Total: ${incomeEntries.reduce((s, i) => s + (i.grossAmount || i.amount), 0).toLocaleString()}
+                      </p>
+                    </div>
                   </div>
-                  <div>
-                    <h3 className="font-serif text-lg text-sage">Income Ledger</h3>
-                    <p className="text-[10px] text-earth uppercase tracking-widest font-bold opacity-60">
-                      FY26 Total: ${incomeEntries.reduce((s, i) => s + (i.grossAmount || i.amount), 0).toLocaleString()}
-                    </p>
+                  <div className="flex gap-3 w-full md:w-auto">
+                    <label className={cn(
+                      "flex-1 md:flex-none flex items-center justify-center gap-2 bg-sage text-white px-6 py-2.5 rounded-2xl text-xs font-bold shadow-lg cursor-pointer hover:bg-emerald-900 transition-all active:scale-95",
+                      isScanning && "opacity-75 cursor-wait pointer-events-none"
+                    )}>
+                      {isScanning ? (
+                        <>
+                          <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                          <span>Scanning...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Camera size={18} />
+                          Scan Invoice/Pay Slip
+                        </>
+                      )}
+                      <input 
+                        type="file" 
+                        accept="image/*,.pdf" 
+                        capture="camera" 
+                        className="hidden" 
+                        onChange={handleScanDocument}
+                      />
+                    </label>
+                    <motion.button
+                      whileHover={{ scale: 1.05 }}
+                      whileTap={{ scale: 0.95 }}
+                      onClick={() => setShowIncomeModal(true)}
+                      className="flex-1 md:flex-none bg-white border border-stone text-earth px-6 py-2.5 rounded-2xl text-xs font-bold shadow-sm flex items-center justify-center gap-2"
+                    >
+                      <Plus size={18} /> Manual Entry
+                    </motion.button>
                   </div>
                 </div>
-                <motion.button
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                  onClick={() => setShowIncomeModal(true)}
-                  className="bg-sage text-white px-6 py-2.5 rounded-2xl text-xs font-bold shadow-lg flex items-center gap-2"
-                >
-                  <Plus size={18} /> Record New Income
-                </motion.button>
               </div>
 
               <div className="grid md:grid-cols-3 gap-6">
@@ -4540,7 +4618,25 @@ function ReceiptRow({ receipt, onUpdate, onClick, categories, isGstRegistered }:
                 onChange={(items) => {
                   const newTotal = items.reduce((s,i) => s + i.price, 0);
                   const anyAsset = items.some(i => i.price >= 300);
-                  onUpdate({ ...receipt, items, total: newTotal, isAsset: anyAsset || newTotal >= 300 });
+                  
+                  // Calculate apportionment from item-level sources for accuracy
+                  const bizTotal = items.filter(i => (i.source || 'Business') === 'Business').reduce((s,i) => s + i.price, 0);
+                  const payTotal = items.filter(i => i.source === 'Payroll').reduce((s,i) => s + i.price, 0);
+                  
+                  const bizPct = Math.round((bizTotal / (newTotal || 1)) * 100);
+                  const payPct = Math.round((payTotal / (newTotal || 1)) * 100);
+                  const persPct = 100 - bizPct - payPct;
+
+                  onUpdate({ 
+                    ...receipt, 
+                    items, 
+                    total: newTotal, 
+                    isAsset: anyAsset || newTotal >= 300,
+                    type: items.length > 1 ? 'Personal Apportionment' : receipt.type,
+                    businessUsage: bizPct,
+                    payrollUsage: payPct,
+                    personalUsage: persPct
+                  });
                 }}
                 onTotalChange={(total) => {
                   const anyAsset = (receipt.items || []).some(i => i.price >= 300);
